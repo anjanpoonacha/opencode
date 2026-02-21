@@ -18,6 +18,7 @@ import { useGlobalSync } from "@/context/global-sync"
 import { useLanguage } from "@/context/language"
 import { NewSessionItem, SessionItem, SessionSkeleton } from "./sidebar-items"
 import { childMapByParent, sortedRootSessions } from "./helpers"
+import { useExpandedSessions } from "./use-expanded-sessions"
 
 type InlineEditorComponent = (props: {
   id: string
@@ -244,10 +245,13 @@ const WorkspaceSessionList = (props: {
   showNew: Accessor<boolean>
   loading: Accessor<boolean>
   sessions: Accessor<Session[]>
+  allSessions: Accessor<Session[]>
   children: Accessor<Map<string, string[]>>
   hasMore: Accessor<boolean>
   loadMore: () => Promise<void>
   language: ReturnType<typeof useLanguage>
+  isSessionExpanded: (sessionId: string) => boolean
+  toggleSessionExpanded: (sessionId: string) => void
 }): JSX.Element => (
   <nav class="flex flex-col gap-1">
     <Show when={props.showNew()}>
@@ -272,6 +276,7 @@ const WorkspaceSessionList = (props: {
           mobile={props.mobile}
           popover={props.popover}
           children={props.children()}
+          allSessions={props.allSessions()}
           sidebarExpanded={props.ctx.sidebarExpanded}
           sidebarHovering={props.ctx.sidebarHovering}
           nav={props.ctx.nav}
@@ -280,6 +285,8 @@ const WorkspaceSessionList = (props: {
           clearHoverProjectSoon={props.ctx.clearHoverProjectSoon}
           prefetchSession={props.ctx.prefetchSession}
           archiveSession={props.ctx.archiveSession}
+          isSessionExpanded={props.isSessionExpanded}
+          toggleSessionExpanded={props.toggleSessionExpanded}
         />
       )}
     </For>
@@ -321,6 +328,10 @@ export const SortableWorkspace = (props: {
   })
   const slug = createMemo(() => base64Encode(props.directory))
   const sessions = createMemo(() => sortedRootSessions(workspaceStore, props.sortNow()))
+  const expandedSessions = useExpandedSessions(
+    () => props.directory,
+    () => workspaceStore.session,
+  )
   const children = createMemo(() => childMapByParent(workspaceStore.session))
   const local = createMemo(() => props.directory === props.project.worktree)
   const active = createMemo(() => props.ctx.currentDir() === props.directory)
@@ -444,10 +455,13 @@ export const SortableWorkspace = (props: {
             showNew={showNew}
             loading={loading}
             sessions={sessions}
+            allSessions={() => workspaceStore.session}
             children={children}
             hasMore={hasMore}
             loadMore={loadMore}
             language={language}
+            isSessionExpanded={expandedSessions.expanded}
+            toggleSessionExpanded={expandedSessions.toggle}
           />
         </Collapsible.Content>
       </Collapsible>
@@ -470,6 +484,10 @@ export const LocalWorkspace = (props: {
   })
   const slug = createMemo(() => base64Encode(props.project.worktree))
   const sessions = createMemo(() => sortedRootSessions(workspace().store, props.sortNow()))
+  const expandedSessions = useExpandedSessions(
+    () => props.project.worktree,
+    () => workspace().store.session,
+  )
   const children = createMemo(() => childMapByParent(workspace().store.session))
   const booted = createMemo((prev) => prev || workspace().store.status === "complete", false)
   const loading = createMemo(() => !booted() && sessions().length === 0)
@@ -482,7 +500,7 @@ export const LocalWorkspace = (props: {
   return (
     <div
       ref={(el) => props.ctx.setScrollContainerRef(el, props.mobile)}
-      class="size-full flex flex-col py-2 overflow-y-auto no-scrollbar [overflow-anchor:none]"
+      class="size-full flex flex-col py-2 overflow-y-auto no-scrollbar [overflow-anchor:none] pr-2"
     >
       <WorkspaceSessionList
         slug={slug}
@@ -492,10 +510,13 @@ export const LocalWorkspace = (props: {
         showNew={() => false}
         loading={loading}
         sessions={sessions}
+        allSessions={() => workspace().store.session}
         children={children}
         hasMore={hasMore}
         loadMore={loadMore}
         language={language}
+        isSessionExpanded={expandedSessions.expanded}
+        toggleSessionExpanded={expandedSessions.toggle}
       />
     </div>
   )

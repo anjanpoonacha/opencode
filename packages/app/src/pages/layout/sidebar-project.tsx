@@ -12,6 +12,7 @@ import { useLanguage } from "@/context/language"
 import { useNotification } from "@/context/notification"
 import { ProjectIcon, SessionItem, type SessionItemProps } from "./sidebar-items"
 import { childMapByParent, displayName, sortedRootSessions } from "./helpers"
+import { type Session } from "@opencode-ai/sdk/v2/client"
 
 export type ProjectSidebarContext = {
   currentDir: Accessor<string>
@@ -30,7 +31,7 @@ export type ProjectSidebarContext = {
   workspacesEnabled: (project: LocalProject) => boolean
   workspaceIds: (project: LocalProject) => string[]
   workspaceLabel: (directory: string, branch?: string, projectId?: string) => string
-  sessionProps: Omit<SessionItemProps, "session" | "list" | "slug" | "children" | "mobile" | "dense" | "popover">
+  sessionProps: Omit<SessionItemProps, "session" | "list" | "slug" | "children" | "mobile" | "dense" | "popover" | "allSessions">
   setHoverSession: (id: string | undefined) => void
 }
 
@@ -188,8 +189,10 @@ const ProjectPreviewPanel = (props: {
   workspaces: Accessor<string[]>
   label: (directory: string) => string
   projectSessions: Accessor<ReturnType<typeof sortedRootSessions>>
+  projectAllSessions: Accessor<Session[]>
   projectChildren: Accessor<Map<string, string[]>>
   workspaceSessions: (directory: string) => ReturnType<typeof sortedRootSessions>
+  workspaceAllSessions: (directory: string) => Session[]
   workspaceChildren: (directory: string) => Map<string, string[]>
   setOpen: (value: boolean) => void
   ctx: ProjectSidebarContext
@@ -215,6 +218,7 @@ const ProjectPreviewPanel = (props: {
                 mobile={props.mobile}
                 popover={false}
                 children={props.projectChildren()}
+                allSessions={props.projectAllSessions()}
               />
             )}
           </For>
@@ -223,6 +227,7 @@ const ProjectPreviewPanel = (props: {
         <For each={props.workspaces()}>
           {(directory) => {
             const sessions = createMemo(() => props.workspaceSessions(directory))
+            const allSessions = createMemo(() => props.workspaceAllSessions(directory))
             const children = createMemo(() => props.workspaceChildren(directory))
             return (
               <div class="flex flex-col gap-1">
@@ -243,6 +248,7 @@ const ProjectPreviewPanel = (props: {
                       mobile={props.mobile}
                       popover={false}
                       children={children()}
+                      allSessions={allSessions()}
                     />
                   )}
                 </For>
@@ -319,11 +325,16 @@ export const SortableProject = (props: {
   }
 
   const projectStore = createMemo(() => globalSync.child(props.project.worktree, { bootstrap: false })[0])
-  const projectSessions = createMemo(() => sortedRootSessions(projectStore(), props.sortNow()))
+  const projectSessions = createMemo(() => sortedRootSessions(projectStore(), props.sortNow()).slice(0, 2))
+  const projectAllSessions = createMemo(() => projectStore().session)
   const projectChildren = createMemo(() => childMapByParent(projectStore().session))
   const workspaceSessions = (directory: string) => {
     const [data] = globalSync.child(directory, { bootstrap: false })
     return sortedRootSessions(data, props.sortNow())
+  }
+  const workspaceAllSessions = (directory: string) => {
+    const [data] = globalSync.child(directory, { bootstrap: false })
+    return data.session
   }
   const workspaceChildren = (directory: string) => {
     const [data] = globalSync.child(directory, { bootstrap: false })
@@ -381,8 +392,10 @@ export const SortableProject = (props: {
             workspaces={workspaces}
             label={label}
             projectSessions={projectSessions}
+            projectAllSessions={projectAllSessions}
             projectChildren={projectChildren}
             workspaceSessions={workspaceSessions}
+            workspaceAllSessions={workspaceAllSessions}
             workspaceChildren={workspaceChildren}
             setOpen={(value) => setState("open", value)}
             ctx={props.ctx}

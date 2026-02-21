@@ -26,6 +26,7 @@ import type { ProjectMeta } from "./global-sync/types"
 import { SESSION_RECENT_LIMIT } from "./global-sync/types"
 import { sanitizeProject } from "./global-sync/utils"
 import { formatServerError } from "@/utils/server-errors"
+import { validateParentIDs } from "../pages/layout/helpers"
 
 type GlobalStore = {
   ready: boolean
@@ -203,10 +204,18 @@ function createGlobalSync() {
           .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
         const limit = store.limit
         const childSessions = store.session.filter((s) => !!s.parentID)
-        const sessions = trimSessions([...nonArchived, ...childSessions], {
-          limit,
-          permission: store.permission,
+        const seen = new Set<string>()
+        const deduplicated = [...nonArchived, ...childSessions].filter((s) => {
+          if (!s.id) return false
+          if (seen.has(s.id)) {
+            console.warn(`[global-sync] Duplicate session ${s.id} detected in directory "${directory}"`)
+            return false
+          }
+          seen.add(s.id)
+          return true
         })
+        const sessions = trimSessions(deduplicated, { limit, permission: store.permission })
+        validateParentIDs(sessions)
         setStore(
           "sessionTotal",
           estimateRootSessionTotal({

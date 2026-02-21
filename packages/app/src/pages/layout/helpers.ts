@@ -60,6 +60,21 @@ export const childMapByParent = (sessions: Session[] | undefined) => {
   return map
 }
 
+export const getChildSessions = (sessions: Session[], parentID: string): Session[] =>
+  sessions.filter((s) => s.parentID === parentID && !s.time?.archived).sort(sortSessions(Date.now()))
+
+export const validateParentIDs = (sessions: Session[]): { valid: boolean; orphaned: string[] } => {
+  const ids = new Set(sessions.map((s) => s.id))
+  const orphaned: string[] = []
+  for (const session of sessions) {
+    if (session.parentID && !ids.has(session.parentID)) {
+      orphaned.push(session.id)
+      console.warn(`[layout] Session "${session.id}" has missing parentID reference: "${session.parentID}"`)
+    }
+  }
+  return { valid: orphaned.length === 0, orphaned }
+}
+
 export const displayName = (project: { name?: string; worktree: string }) =>
   project.name || getFilename(project.worktree)
 

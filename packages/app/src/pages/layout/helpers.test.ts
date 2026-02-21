@@ -1,31 +1,26 @@
 import { describe, expect, test } from "bun:test"
-import {
-  collectNewSessionDeepLinks,
-  collectOpenProjectDeepLinks,
-  drainPendingDeepLinks,
-  parseDeepLink,
-  parseNewSessionDeepLink,
-} from "./deep-links"
-import { type Session } from "@opencode-ai/sdk/v2/client"
+import { collectOpenProjectDeepLinks, drainPendingDeepLinks, parseDeepLink } from "./deep-links"
 import {
   displayName,
-  effectiveWorkspaceOrder,
   errorMessage,
-  hasProjectPermissions,
-  latestRootSession,
+  getChildSessions,
+  getDraggableId,
+  syncWorkspaceOrder,
+  validateParentIDs,
   workspaceKey,
 } from "./helpers"
+import type { Session } from "@opencode-ai/sdk/v2/client"
 
-const session = (input: Partial<Session> & Pick<Session, "id" | "directory">) =>
-  ({
-    title: "",
-    version: "v2",
-    parentID: undefined,
-    messageCount: 0,
-    permissions: { session: {}, share: {} },
-    time: { created: 0, updated: 0, archived: undefined },
-    ...input,
-  }) as Session
+const mockSession = (id: string, overrides?: Partial<Session>): Session => ({
+  id,
+  slug: "",
+  projectID: "",
+  title: "",
+  version: "",
+  directory: "/test",
+  time: { created: Date.now(), updated: Date.now() },
+  ...overrides,
+})
 
 describe("layout deep links", () => {
   test("parses open-project deep links", () => {
@@ -67,28 +62,6 @@ describe("layout deep links", () => {
     expect(result).toEqual(["/a", "/c"])
   })
 
-  test("parses new-session deep links with optional prompt", () => {
-    expect(parseNewSessionDeepLink("opencode://new-session?directory=/tmp/demo")).toEqual({ directory: "/tmp/demo" })
-    expect(parseNewSessionDeepLink("opencode://new-session?directory=/tmp/demo&prompt=hello%20world")).toEqual({
-      directory: "/tmp/demo",
-      prompt: "hello world",
-    })
-  })
-
-  test("ignores new-session deep links without directory", () => {
-    expect(parseNewSessionDeepLink("opencode://new-session")).toBeUndefined()
-    expect(parseNewSessionDeepLink("opencode://new-session?directory=")).toBeUndefined()
-  })
-
-  test("collects only valid new-session deep links", () => {
-    const result = collectNewSessionDeepLinks([
-      "opencode://new-session?directory=/a",
-      "opencode://open-project?directory=/b",
-      "opencode://new-session?directory=/c&prompt=ship%20it",
-    ])
-    expect(result).toEqual([{ directory: "/a" }, { directory: "/c", prompt: "ship it" }])
-  })
-
   test("drains global deep links once", () => {
     const target = {
       __OPENCODE__: {
@@ -104,98 +77,26 @@ describe("layout deep links", () => {
 describe("layout workspace helpers", () => {
   test("normalizes trailing slash in workspace key", () => {
     expect(workspaceKey("/tmp/demo///")).toBe("/tmp/demo")
-    expect(workspaceKey("C:\\tmp\\demo\\\\")).toBe("C:/tmp/demo")
+    expect(workspaceKey("C:\\tmp\\demo\\\\")).toBe("C:\\tmp\\demo")
   })
 
   test("preserves posix and drive roots in workspace key", () => {
     expect(workspaceKey("/")).toBe("/")
     expect(workspaceKey("///")).toBe("/")
-    expect(workspaceKey("C:\\")).toBe("C:/")
-    expect(workspaceKey("C://")).toBe("C:/")
+    expect(workspaceKey("C:\\")).toBe("C:\\")
+    expect(workspaceKey("C:\\\\\\")).toBe("C:\\")
     expect(workspaceKey("C:///")).toBe("C:/")
   })
 
   test("keeps local first while preserving known order", () => {
-    const result = effectiveWorkspaceOrder("/root", ["/root", "/b", "/c"], ["/root", "/c", "/a", "/b"])
+    const result = syncWorkspaceOrder("/root", ["/root", "/b", "/c"], ["/root", "/c", "/a", "/b"])
     expect(result).toEqual(["/root", "/c", "/b"])
   })
 
-  test("finds the latest root session across workspaces", () => {
-    const result = latestRootSession(
-      [
-        {
-          path: { directory: "/root" },
-          session: [session({ id: "root", directory: "/root", time: { created: 1, updated: 1, archived: undefined } })],
-        },
-        {
-          path: { directory: "/workspace" },
-          session: [
-            session({
-              id: "workspace",
-              directory: "/workspace",
-              time: { created: 2, updated: 2, archived: undefined },
-            }),
-          ],
-        },
-      ],
-      120_000,
-    )
-
-    expect(result?.id).toBe("workspace")
-  })
-
-  test("detects project permissions with a filter", () => {
-    const result = hasProjectPermissions(
-      {
-        root: [{ id: "perm-root" }, { id: "perm-hidden" }],
-        child: [{ id: "perm-child" }],
-      },
-      (item) => item.id === "perm-child",
-    )
-
-    expect(result).toBe(true)
-  })
-
-  test("ignores project permissions filtered out", () => {
-    const result = hasProjectPermissions(
-      {
-        root: [{ id: "perm-root" }],
-      },
-      () => false,
-    )
-
-    expect(result).toBe(false)
-  })
-
-  test("ignores archived and child sessions when finding latest root session", () => {
-    const result = latestRootSession(
-      [
-        {
-          path: { directory: "/workspace" },
-          session: [
-            session({
-              id: "archived",
-              directory: "/workspace",
-              time: { created: 10, updated: 10, archived: 10 },
-            }),
-            session({
-              id: "child",
-              directory: "/workspace",
-              parentID: "parent",
-              time: { created: 20, updated: 20, archived: undefined },
-            }),
-            session({
-              id: "root",
-              directory: "/workspace",
-              time: { created: 30, updated: 30, archived: undefined },
-            }),
-          ],
-        },
-      ],
-      120_000,
-    )
-
-    expect(result?.id).toBe("root")
+  test("extracts draggable id safely", () => {
+    expect(getDraggableId({ draggable: { id: "x" } })).toBe("x")
+    expect(getDraggableId({ draggable: { id: 42 } })).toBeUndefined()
+    expect(getDraggableId(null)).toBeUndefined()
   })
 
   test("formats fallback project display name", () => {
@@ -207,5 +108,105 @@ describe("layout workspace helpers", () => {
     expect(errorMessage({ data: { message: "boom" } }, "fallback")).toBe("boom")
     expect(errorMessage(new Error("broken"), "fallback")).toBe("broken")
     expect(errorMessage("unknown", "fallback")).toBe("fallback")
+  })
+})
+
+describe("getChildSessions", () => {
+  test("filters by parentID", () => {
+    const sessions: Session[] = [
+      mockSession("child-1", { parentID: "parent-a" }),
+      mockSession("child-2", { parentID: "parent-b" }),
+      mockSession("child-3", { parentID: "parent-a" }),
+      mockSession("root", {}),
+    ]
+
+    const childrenA = getChildSessions(sessions, "parent-a")
+    expect(childrenA.map((s) => s.id)).toEqual(expect.arrayContaining(["child-1", "child-3"]))
+    expect(childrenA).toHaveLength(2)
+
+    const childrenB = getChildSessions(sessions, "parent-b")
+    expect(childrenB).toHaveLength(1)
+    expect(childrenB[0].id).toBe("child-2")
+
+    const childrenNone = getChildSessions(sessions, "non-existent")
+    expect(childrenNone).toHaveLength(0)
+  })
+
+  test("sorts by updated time descending", () => {
+    const now = Date.now()
+    const sessions: Session[] = [
+      mockSession("old", { parentID: "parent", time: { created: now, updated: now - 10000 } }),
+      mockSession("new", { parentID: "parent", time: { created: now, updated: now - 1000 } }),
+      mockSession("mid", { parentID: "parent", time: { created: now, updated: now - 5000 } }),
+    ]
+
+    const children = getChildSessions(sessions, "parent")
+    const ids = children.map((s) => s.id)
+    expect(ids).toContain("mid")
+    expect(ids).toContain("new")
+    expect(ids).toContain("old")
+  })
+
+  test("filters out archived sessions", () => {
+    const sessions: Session[] = [
+      mockSession("active-1", { parentID: "parent" }),
+      mockSession("active-2", { parentID: "parent" }),
+      mockSession("archived-1", {
+        parentID: "parent",
+        time: { created: Date.now(), updated: Date.now(), archived: Date.now() },
+      }),
+      mockSession("archived-2", {
+        parentID: "parent",
+        time: { created: Date.now(), updated: Date.now(), archived: Date.now() },
+      }),
+    ]
+
+    const children = getChildSessions(sessions, "parent")
+    expect(children).toHaveLength(2)
+    expect(children.map((s) => s.id)).toEqual(expect.arrayContaining(["active-1", "active-2"]))
+    expect(children.find((s) => s.id === "archived-1")).toBeUndefined()
+    expect(children.find((s) => s.id === "archived-2")).toBeUndefined()
+  })
+})
+
+describe("validateParentIDs", () => {
+  test("returns valid when all parentID references exist", () => {
+    const sessions: Session[] = [
+      mockSession("root"),
+      mockSession("child-1", { parentID: "root" }),
+      mockSession("child-2", { parentID: "root" }),
+      mockSession("grandchild", { parentID: "child-1" }),
+    ]
+
+    const result = validateParentIDs(sessions)
+    expect(result.valid).toBe(true)
+    expect(result.orphaned).toHaveLength(0)
+  })
+
+  test("returns invalid when parentID references are missing", () => {
+    const sessions: Session[] = [
+      mockSession("root"),
+      mockSession("child-1", { parentID: "root" }),
+      mockSession("orphaned-1", { parentID: "non-existent" }),
+      mockSession("orphaned-2", { parentID: "also-missing" }),
+    ]
+
+    const result = validateParentIDs(sessions)
+    expect(result.valid).toBe(false)
+    expect(result.orphaned).toHaveLength(2)
+    expect(result.orphaned).toContain("orphaned-1")
+    expect(result.orphaned).toContain("orphaned-2")
+  })
+
+  test("handles sessions without parentID", () => {
+    const sessions: Session[] = [
+      mockSession("root-1"),
+      mockSession("root-2"),
+      mockSession("child", { parentID: "root-1" }),
+    ]
+
+    const result = validateParentIDs(sessions)
+    expect(result.valid).toBe(true)
+    expect(result.orphaned).toHaveLength(0)
   })
 })

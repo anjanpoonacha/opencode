@@ -7,6 +7,7 @@ import { execSync } from "node:child_process"
 import { terminalAttr, type E2EWindow } from "../src/testing/terminal"
 import { createSdk, modKey, resolveDirectory, serverUrl } from "./utils"
 import {
+  dropdownMenuTriggerSelector,
   dropdownMenuContentSelector,
   projectSwitchSelector,
   projectMenuTriggerSelector,
@@ -205,7 +206,7 @@ export async function closeDialog(page: Page, dialog: Locator) {
   await expect(dialog).toHaveCount(0)
 }
 
-async function isSidebarClosed(page: Page) {
+export async function isSidebarClosed(page: Page) {
   const button = await waitSidebarButton(page, "isSidebarClosed")
   return (await button.getAttribute("aria-expanded")) !== "true"
 }
@@ -236,7 +237,7 @@ async function errorBoundaryText(page: Page) {
   return [title ? "Error boundary" : "", description ?? "", detail ?? ""].filter(Boolean).join("\n")
 }
 
-async function assertHealthy(page: Page, context: string) {
+export async function assertHealthy(page: Page, context: string) {
   const text = await errorBoundaryText(page)
   if (!text) return
   console.log(`[e2e:error-boundary][${context}]\n${text}`)
@@ -311,7 +312,61 @@ export async function openSettings(page: Page) {
   return dialog
 }
 
-export async function createTestProject(input?: { serverUrl?: string }) {
+export async function seedProjects(page: Page, input: { directory: string; extra?: string[] }) {
+  await page.addInitScript(
+    (args: { directory: string; serverUrl: string; extra: string[] }) => {
+      const key = "opencode.global.dat:server"
+      const raw = localStorage.getItem(key)
+      const parsed = (() => {
+        if (!raw) return undefined
+        try {
+          return JSON.parse(raw) as unknown
+        } catch {
+          return undefined
+        }
+      })()
+
+      const store = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {}
+      const list = Array.isArray(store.list) ? store.list : []
+      const lastProject = store.lastProject && typeof store.lastProject === "object" ? store.lastProject : {}
+      const projects = store.projects && typeof store.projects === "object" ? store.projects : {}
+      const nextProjects = { ...(projects as Record<string, unknown>) }
+
+      const add = (origin: string, directory: string) => {
+        const current = nextProjects[origin]
+        const items = Array.isArray(current) ? current : []
+        const existing = items.filter(
+          (p): p is { worktree: string; expanded?: boolean } =>
+            !!p &&
+            typeof p === "object" &&
+            "worktree" in p &&
+            typeof (p as { worktree?: unknown }).worktree === "string",
+        )
+
+        if (existing.some((p) => p.worktree === directory)) return
+        nextProjects[origin] = [{ worktree: directory, expanded: true }, ...existing]
+      }
+
+      const directories = [args.directory, ...args.extra]
+      for (const directory of directories) {
+        add("local", directory)
+        add(args.serverUrl, directory)
+      }
+
+      localStorage.setItem(
+        key,
+        JSON.stringify({
+          list,
+          projects: nextProjects,
+          lastProject,
+        }),
+      )
+    },
+    { directory: input.directory, serverUrl, extra: input.extra ?? [] },
+  )
+}
+
+export async function createTestProject() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "opencode-e2e-project-"))
   const id = `e2e-${path.basename(root)}`
 
@@ -326,7 +381,7 @@ export async function createTestProject(input?: { serverUrl?: string }) {
     stdio: "ignore",
   })
 
-  return resolveDirectory(root, input?.serverUrl)
+  return resolveDirectory(root)
 }
 
 export async function cleanupTestProject(directory: string) {
@@ -375,22 +430,22 @@ export async function waitSlug(page: Page, skip: string[] = []) {
   return next
 }
 
-export async function resolveSlug(slug: string, input?: { serverUrl?: string }) {
+export async function resolveSlug(slug: string) {
   const directory = base64Decode(slug)
   if (!directory) throw new Error(`Failed to decode workspace slug: ${slug}`)
-  const resolved = await resolveDirectory(directory, input?.serverUrl)
+  const resolved = await resolveDirectory(directory)
   return { directory: resolved, slug: base64Encode(resolved), raw: slug }
 }
 
-export async function waitDir(page: Page, directory: string, input?: { serverUrl?: string }) {
-  const target = await resolveDirectory(directory, input?.serverUrl)
+export async function waitDir(page: Page, directory: string) {
+  const target = await resolveDirectory(directory)
   await expect
     .poll(
       async () => {
         await assertHealthy(page, "waitDir")
         const slug = slugFromUrl(page.url())
         if (!slug) return ""
-        return resolveSlug(slug, input)
+        return resolveSlug(slug)
           .then((item) => item.directory)
           .catch(() => "")
       },
@@ -400,33 +455,25 @@ export async function waitDir(page: Page, directory: string, input?: { serverUrl
   return { directory: target, slug: base64Encode(target) }
 }
 
-export async function waitSession(
-  page: Page,
-  input: {
-    directory: string
-    sessionID?: string
-    serverUrl?: string
-    allowAnySession?: boolean
-  },
-) {
-  const target = await resolveDirectory(input.directory, input.serverUrl)
+export async function waitSession(page: Page, input: { directory: string; sessionID?: string }) {
+  const target = await resolveDirectory(input.directory)
   await expect
     .poll(
       async () => {
         await assertHealthy(page, "waitSession")
         const slug = slugFromUrl(page.url())
         if (!slug) return false
-        const resolved = await resolveSlug(slug, { serverUrl: input.serverUrl }).catch(() => undefined)
+        const resolved = await resolveSlug(slug).catch(() => undefined)
         if (!resolved || resolved.directory !== target) return false
         const current = sessionIDFromUrl(page.url())
         if (input.sessionID && current !== input.sessionID) return false
-        if (!input.sessionID && !input.allowAnySession && current) return false
+        if (!input.sessionID && current) return false
 
         const state = await probeSession(page)
         if (input.sessionID && (!state || state.sessionID !== input.sessionID)) return false
-        if (!input.sessionID && !input.allowAnySession && state?.sessionID) return false
+        if (!input.sessionID && state?.sessionID) return false
         if (state?.dir) {
-          const dir = await resolveDirectory(state.dir, input.serverUrl).catch(() => state.dir ?? "")
+          const dir = await resolveDirectory(state.dir).catch(() => state.dir ?? "")
           if (dir !== target) return false
         }
 
@@ -442,9 +489,9 @@ export async function waitSession(
   return { directory: target, slug: base64Encode(target) }
 }
 
-export async function waitSessionSaved(directory: string, sessionID: string, timeout = 30_000, serverUrl?: string) {
-  const sdk = createSdk(directory, serverUrl)
-  const target = await resolveDirectory(directory, serverUrl)
+export async function waitSessionSaved(directory: string, sessionID: string, timeout = 30_000) {
+  const sdk = createSdk(directory)
+  const target = await resolveDirectory(directory)
 
   await expect
     .poll(
@@ -454,7 +501,7 @@ export async function waitSessionSaved(directory: string, sessionID: string, tim
           .then((x) => x.data)
           .catch(() => undefined)
         if (!data?.directory) return ""
-        return resolveDirectory(data.directory, serverUrl).catch(() => data.directory)
+        return resolveDirectory(data.directory).catch(() => data.directory)
       },
       { timeout },
     )
@@ -531,15 +578,12 @@ export async function confirmDialog(page: Page, buttonName: string | RegExp) {
 }
 
 export async function openSharePopover(page: Page) {
-  const scroller = page.locator(".scroll-view__viewport").first()
-  await expect(scroller).toBeVisible()
-  await expect(scroller.getByRole("heading", { level: 1 }).first()).toBeVisible({ timeout: 30_000 })
-
-  const menuTrigger = scroller.getByRole("button", { name: /more options/i }).first()
-  await expect(menuTrigger).toBeVisible({ timeout: 30_000 })
+  const rightSection = page.locator(titlebarRightSelector)
+  const shareButton = rightSection.getByRole("button", { name: "Share" }).first()
+  await expect(shareButton).toBeVisible()
 
   const popoverBody = page
-    .locator('[data-component="popover-content"]')
+    .locator(popoverBodySelector)
     .filter({ has: page.getByRole("button", { name: /^(Publish|Unpublish)$/ }) })
     .first()
 
@@ -549,13 +593,16 @@ export async function openSharePopover(page: Page) {
     .catch(() => false)
 
   if (!opened) {
-    const menu = page.locator(dropdownMenuContentSelector).first()
-    await menuTrigger.click()
-    await clickMenuItem(menu, /share/i)
-    await expect(menu).toHaveCount(0)
-    await expect(popoverBody).toBeVisible({ timeout: 30_000 })
+    await shareButton.click()
+    await expect(popoverBody).toBeVisible()
   }
-  return { rightSection: scroller, popoverBody }
+  return { rightSection, popoverBody }
+}
+
+export async function clickPopoverButton(page: Page, buttonName: string | RegExp) {
+  const button = page.getByRole("button").filter({ hasText: buttonName }).first()
+  await expect(button).toBeVisible()
+  await button.click()
 }
 
 export async function clickListItem(
@@ -619,9 +666,8 @@ export async function cleanupSession(input: {
   sessionID: string
   directory?: string
   sdk?: ReturnType<typeof createSdk>
-  serverUrl?: string
 }) {
-  const sdk = input.sdk ?? (input.directory ? createSdk(input.directory, input.serverUrl) : undefined)
+  const sdk = input.sdk ?? (input.directory ? createSdk(input.directory) : undefined)
   if (!sdk) throw new Error("cleanupSession requires sdk or directory")
   await waitSessionIdle(sdk, input.sessionID, 5_000).catch(() => undefined)
   const current = await status(sdk, input.sessionID).catch(() => undefined)
@@ -723,6 +769,40 @@ export async function seedSessionQuestion(
   return { id: result.id }
 }
 
+export async function seedSessionPermission(
+  sdk: ReturnType<typeof createSdk>,
+  input: {
+    sessionID: string
+    permission: string
+    patterns: string[]
+    description?: string
+  },
+) {
+  const text = [
+    "Your only valid response is one bash tool call.",
+    `Use this JSON input: ${JSON.stringify({
+      command: input.patterns[0] ? `ls ${JSON.stringify(input.patterns[0])}` : "pwd",
+      workdir: "/",
+      description: input.description ?? `seed ${input.permission} permission request`,
+    })}`,
+    "Do not output plain text.",
+  ].join("\n")
+
+  const result = await seed({
+    sdk,
+    sessionID: input.sessionID,
+    prompt: text,
+    timeout: 30_000,
+    probe: async () => {
+      const list = await sdk.permission.list().then((x) => x.data ?? [])
+      return list.find((item) => item.sessionID === input.sessionID)
+    },
+  })
+
+  if (!result) throw new Error("Timed out seeding permission request")
+  return { id: result.id }
+}
+
 export async function seedSessionTask(
   sdk: ReturnType<typeof createSdk>,
   input: {
@@ -779,6 +859,36 @@ export async function seedSessionTask(
 
   if (!result) throw new Error("Timed out seeding task tool")
   return result
+}
+
+export async function seedSessionTodos(
+  sdk: ReturnType<typeof createSdk>,
+  input: {
+    sessionID: string
+    todos: Array<{ content: string; status: string; priority: string }>
+  },
+) {
+  const text = [
+    "Your only valid response is one todowrite tool call.",
+    `Use this JSON input: ${JSON.stringify({ todos: input.todos })}`,
+    "Do not output plain text.",
+  ].join("\n")
+  const target = JSON.stringify(input.todos)
+
+  const result = await seed({
+    sdk,
+    sessionID: input.sessionID,
+    prompt: text,
+    timeout: 30_000,
+    probe: async () => {
+      const todos = await sdk.session.todo({ sessionID: input.sessionID }).then((x) => x.data ?? [])
+      if (JSON.stringify(todos) !== target) return
+      return true
+    },
+  })
+
+  if (!result) throw new Error("Timed out seeding todos")
+  return true
 }
 
 export async function clearSessionDockSeed(sdk: ReturnType<typeof createSdk>, sessionID: string) {
@@ -870,57 +980,30 @@ export async function openProjectMenu(page: Page, projectSlug: string) {
 }
 
 export async function setWorkspacesEnabled(page: Page, projectSlug: string, enabled: boolean) {
-  const current = () =>
-    page
-      .getByRole("button", { name: "New workspace" })
-      .first()
-      .isVisible()
-      .then((x) => x)
-      .catch(() => false)
+  const current = await page
+    .getByRole("button", { name: "New workspace" })
+    .first()
+    .isVisible()
+    .then((x) => x)
+    .catch(() => false)
 
-  if ((await current()) === enabled) return
-
-  if (enabled) {
-    await page.reload()
-    await openSidebar(page)
-    if ((await current()) === enabled) return
-  }
+  if (current === enabled) return
 
   const flip = async (timeout?: number) => {
     const menu = await openProjectMenu(page, projectSlug)
     const toggle = menu.locator(projectWorkspacesToggleSelector(projectSlug)).first()
     await expect(toggle).toBeVisible()
-    await expect(toggle).toBeEnabled({ timeout: 30_000 })
-    const clicked = await toggle
-      .click({ force: true, timeout })
-      .then(() => true)
-      .catch(() => false)
-    if (clicked) return
-    await toggle.focus()
-    await page.keyboard.press("Enter")
+    return toggle.click({ force: true, timeout })
   }
 
-  for (const timeout of [1500, undefined, undefined]) {
-    if ((await current()) === enabled) break
-    await flip(timeout)
-      .then(() => undefined)
-      .catch(() => undefined)
-    const matched = await expect
-      .poll(current, { timeout: 5_000 })
-      .toBe(enabled)
-      .then(() => true)
-      .catch(() => false)
-    if (matched) break
-  }
+  const flipped = await flip(1500)
+    .then(() => true)
+    .catch(() => false)
 
-  if ((await current()) !== enabled) {
-    await page.reload()
-    await openSidebar(page)
-  }
+  if (!flipped) await flip()
 
   const expected = enabled ? "New workspace" : "New session"
-  await expect.poll(current, { timeout: 60_000 }).toBe(enabled)
-  await expect(page.getByRole("button", { name: expected }).first()).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByRole("button", { name: expected }).first()).toBeVisible()
 }
 
 export async function openWorkspaceMenu(page: Page, workspaceSlug: string) {
@@ -937,12 +1020,19 @@ export async function openWorkspaceMenu(page: Page, workspaceSlug: string) {
   return menu
 }
 
-export async function assistantText(sdk: ReturnType<typeof createSdk>, sessionID: string) {
-  const messages = await sdk.session.messages({ sessionID, limit: 50 }).then((r) => r.data ?? [])
-  return messages
-    .filter((m) => m.info.role === "assistant")
-    .flatMap((m) => m.parts)
-    .filter((p) => p.type === "text")
-    .map((p) => p.text)
-    .join("\n")
+export async function seedMessage(sdk: Parameters<typeof withSession>[0], sessionID: string) {
+  await sdk.session.promptAsync({
+    sessionID,
+    noReply: true,
+    parts: [{ type: "text", text: "e2e seed" }],
+  })
+  await expect
+    .poll(
+      async () => {
+        const messages = await sdk.session.messages({ sessionID, limit: 1 }).then((r) => r.data ?? [])
+        return messages.length
+      },
+      { timeout: 30_000 },
+    )
+    .toBeGreaterThan(0)
 }

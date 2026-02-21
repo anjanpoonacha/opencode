@@ -18,6 +18,7 @@ import { useLanguage } from "@/context/language"
 import { useSettings } from "@/context/settings"
 import { useSDK } from "@/context/sdk"
 import { useSync } from "@/context/sync"
+import { Tooltip } from "@opencode-ai/ui/tooltip"
 
 const boundaryTarget = (root: HTMLElement, target: EventTarget | null) => {
   const current = target instanceof Element ? target : undefined
@@ -437,6 +438,22 @@ export function MessageTimeline(props: {
                 <Show when={sessionID()}>
                   {(id) => (
                     <div class="shrink-0 flex items-center gap-3">
+                      <Show when={parentID()}>
+                        <Tooltip value="Navigate to parent" placement="top">
+                          <IconButton
+                            tabIndex={-1}
+                            icon="arrow-up"
+                            variant="ghost"
+                            onClick={navigateParent}
+                            aria-label="Navigate to parent"
+                            class="size-5"
+                            data-testid="navigate-parent-button"
+                          />
+                        </Tooltip>
+                        <Tooltip value="Subagent" placement="top">
+                          <Icon name="brain" class="text-text-weak mr-1" data-testid="subagent-indicator" />
+                        </Tooltip>
+                      </Show>
                       <SessionContextUsage placement="bottom" />
                       <DropdownMenu
                         gutter={4}

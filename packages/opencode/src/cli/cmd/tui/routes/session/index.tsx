@@ -130,11 +130,15 @@ export function Session() {
   })
   const messages = createMemo(() => sync.data.message[route.sessionID] ?? [])
   const permissions = createMemo(() => {
-    if (session()?.parentID) return []
+    // When viewing a child session, show its own permissions
+    if (session()?.parentID) return sync.data.permission[route.sessionID] ?? []
+    // When viewing parent, aggregate permissions from all children
     return children().flatMap((x) => sync.data.permission[x.id] ?? [])
   })
   const questions = createMemo(() => {
-    if (session()?.parentID) return []
+    // When viewing a child session, show its own questions
+    if (session()?.parentID) return sync.data.question[route.sessionID] ?? []
+    // When viewing parent, aggregate questions from all children
     return children().flatMap((x) => sync.data.question[x.id] ?? [])
   })
 
@@ -1173,7 +1177,7 @@ export function Session() {
                 <QuestionPrompt request={questions()[0]} />
               </Show>
               <Prompt
-                visible={!session()?.parentID && permissions().length === 0 && questions().length === 0}
+                visible={permissions().length === 0 && questions().length === 0}
                 ref={(r) => {
                   prompt = r
                   promptRef.set(r)

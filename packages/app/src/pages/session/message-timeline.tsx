@@ -10,6 +10,7 @@ import { DropdownMenu } from "@opencode-ai/ui/dropdown-menu"
 import { Dialog } from "@opencode-ai/ui/dialog"
 import { InlineInput } from "@opencode-ai/ui/inline-input"
 import { Spinner } from "@opencode-ai/ui/spinner"
+import { Tooltip } from "@opencode-ai/ui/tooltip"
 import { SessionTurn } from "@opencode-ai/ui/session-turn"
 import { ScrollView } from "@opencode-ai/ui/scroll-view"
 import { TextField } from "@opencode-ai/ui/text-field"
@@ -734,6 +735,22 @@ export function MessageTimeline(props: {
                   <Show when={sessionID()}>
                     {(id) => (
                       <div class="shrink-0 flex items-center gap-3">
+                        <Show when={parentID()}>
+                          <Tooltip value="Navigate to parent" placement="top">
+                            <IconButton
+                              tabIndex={-1}
+                              icon="arrow-up"
+                              variant="ghost"
+                              onClick={navigateParent}
+                              aria-label="Navigate to parent"
+                              class="size-5"
+                              data-testid="navigate-parent-button"
+                            />
+                          </Tooltip>
+                          <Tooltip value="Subagent" placement="top">
+                            <Icon name="brain" class="text-text-weak mr-1" data-testid="subagent-indicator" />
+                          </Tooltip>
+                        </Show>
                         <SessionContextUsage placement="bottom" />
                         <DropdownMenu
                           gutter={4}

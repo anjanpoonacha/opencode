@@ -16,7 +16,7 @@ import { type Session } from "@opencode-ai/sdk/v2/client"
 import { type LocalProject } from "@/context/layout"
 import { useGlobalSync } from "@/context/global-sync"
 import { useLanguage } from "@/context/language"
-import { NewSessionItem, SessionItem, SessionSkeleton } from "./sidebar-items"
+import { NewSessionItem, SessionItem, SessionSkeleton, SessionTreeProvider } from "./sidebar-items"
 import { childMapByParent, sortedRootSessions, workspaceKey } from "./helpers"
 
 type InlineEditorComponent = (props: {
@@ -244,6 +244,8 @@ const WorkspaceSessionList = (props: {
   showNew: Accessor<boolean>
   loading: Accessor<boolean>
   sessions: Accessor<Session[]>
+  allSessions: Accessor<Session[]>
+  directory: () => string
   children: Accessor<Map<string, string[]>>
   hasMore: Accessor<boolean>
   loadMore: () => Promise<void>
@@ -262,27 +264,29 @@ const WorkspaceSessionList = (props: {
     <Show when={props.loading()}>
       <SessionSkeleton />
     </Show>
-    <For each={props.sessions()}>
-      {(session) => (
-        <SessionItem
-          session={session}
-          list={props.sessions()}
-          navList={props.ctx.navList}
-          slug={props.slug()}
-          mobile={props.mobile}
-          popover={props.popover}
-          children={props.children()}
-          sidebarExpanded={props.ctx.sidebarExpanded}
-          sidebarHovering={props.ctx.sidebarHovering}
-          nav={props.ctx.nav}
-          hoverSession={props.ctx.hoverSession}
-          setHoverSession={props.ctx.setHoverSession}
-          clearHoverProjectSoon={props.ctx.clearHoverProjectSoon}
-          prefetchSession={props.ctx.prefetchSession}
-          archiveSession={props.ctx.archiveSession}
-        />
-      )}
-    </For>
+    <SessionTreeProvider directory={props.directory} allSessions={props.allSessions}>
+      <For each={props.sessions()}>
+        {(session) => (
+          <SessionItem
+            session={session}
+            list={props.sessions()}
+            navList={props.ctx.navList}
+            slug={props.slug()}
+            mobile={props.mobile}
+            popover={props.popover}
+            children={props.children()}
+            sidebarExpanded={props.ctx.sidebarExpanded}
+            sidebarHovering={props.ctx.sidebarHovering}
+            nav={props.ctx.nav}
+            hoverSession={props.ctx.hoverSession}
+            setHoverSession={props.ctx.setHoverSession}
+            clearHoverProjectSoon={props.ctx.clearHoverProjectSoon}
+            prefetchSession={props.ctx.prefetchSession}
+            archiveSession={props.ctx.archiveSession}
+          />
+        )}
+      </For>
+    </SessionTreeProvider>
     <Show when={props.hasMore()}>
       <div class="relative w-full py-1">
         <Button
@@ -445,6 +449,8 @@ export const SortableWorkspace = (props: {
             showNew={showNew}
             loading={loading}
             sessions={sessions}
+            allSessions={() => workspaceStore.session ?? []}
+            directory={() => props.directory}
             children={children}
             hasMore={hasMore}
             loadMore={loadMore}
@@ -494,6 +500,8 @@ export const LocalWorkspace = (props: {
         showNew={() => false}
         loading={loading}
         sessions={sessions}
+        allSessions={() => workspace().store.session ?? []}
+        directory={() => props.project.worktree}
         children={children}
         hasMore={hasMore}
         loadMore={loadMore}

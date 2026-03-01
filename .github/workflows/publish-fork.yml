@@ -5,6 +5,10 @@ on:
     branches:
       - release
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish (e.g. 1.3.1). Overrides package.json."
+        required: false
 
 jobs:
   get-version:
@@ -19,10 +23,14 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - name: Get version from package.json
+      - name: Get version
         id: version
         run: |
-          VERSION=$(node -p "require('./packages/opencode/package.json').version")
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION=$(node -p "require('./packages/opencode/package.json').version")
+          fi
           TAG="v${VERSION}-anjan"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "tag=$TAG" >> $GITHUB_OUTPUT

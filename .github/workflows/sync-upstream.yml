@@ -60,9 +60,13 @@ jobs:
           git checkout "v${VERSION}"
           git checkout -b "$BRANCH"
 
-          # Get feature commits from feature-commits branch
-          # This gets all commits on feature-commits that are not ancestors of v1.2.10
-          COMMITS=$(git log origin/feature-commits --reverse --format="%H" ^$(git merge-base origin/feature-commits v1.2.10))
+          # Find the base version that feature-commits is built on
+          # by finding the latest upstream tag that's an ancestor of feature-commits
+          BASE_TAG=$(git describe --tags --abbrev=0 --match "v[0-9]*" origin/feature-commits 2>/dev/null || echo "v1.2.10")
+          echo "Feature commits base: $BASE_TAG"
+
+          # Get commits that are on feature-commits but not in the base tag
+          COMMITS=$(git log origin/feature-commits --reverse --format="%H" ^${BASE_TAG})
 
           echo "Feature commits to apply:"
           echo "$COMMITS"

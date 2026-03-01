@@ -17,11 +17,13 @@ jobs:
         with:
           fetch-depth: 0
           fetch-tags: true
+          token: ${{ secrets.GH_PAT || github.token }}
 
       - name: Setup Git
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${{ secrets.GH_PAT || github.token }}@github.com/${{ github.repository }}.git"
 
       - name: Add upstream remote
         run: |
@@ -60,7 +62,7 @@ jobs:
 
           # Find the base version that feature-commits is built on
           # by finding the latest upstream tag that's an ancestor of feature-commits
-          BASE_TAG=$(git describe --tags --abbrev=0 --match "v[0-9]*" origin/feature-commits 2>/dev/null || echo "v1.2.10")
+          BASE_TAG=$(git describe --tags --abbrev=0 --match "v[0-9]*" --exclude "*-anjan" origin/feature-commits 2>/dev/null || echo "v1.2.10")
           echo "Feature commits base: $BASE_TAG"
 
           # Get commits that are on feature-commits but not in the base tag
@@ -76,9 +78,24 @@ jobs:
           for COMMIT in $COMMITS; do
             MSG=$(git log -1 --format="%s" $COMMIT)
             SHORT=$(git rev-parse --short $COMMIT)
-            
+
+            # The fork-workflows commit deletes upstream workflow files which causes
+            # modify/delete conflicts. Resolve by always accepting the deletion.
+            if echo "$MSG" | grep -q "fork workflows"; then
+              echo "Applying (force-delete strategy): $SHORT $MSG"
+              git cherry-pick "$COMMIT" --no-commit -X theirs 2>/dev/null || true
+              # Resolve modify/delete conflicts: always delete the file (our intent)
+              git diff --name-only --diff-filter=U | xargs -r git rm -f -- 2>/dev/null || true
+              # Stage any remaining changes
+              git add -A
+              git commit -m "$MSG" --no-verify
+              RESULTS="${RESULTS}| ✅ | \`$SHORT\` | $MSG |\n"
+              echo "Success: $MSG"
+              continue
+            fi
+
             echo "Applying: $SHORT $MSG"
-            
+
             if git cherry-pick "$COMMIT" --no-commit; then
               git commit -m "$MSG" --no-verify
               RESULTS="${RESULTS}| ✅ | \`$SHORT\` | $MSG |\n"

@@ -4,6 +4,7 @@ import { useNavigate, useParams } from "@solidjs/router"
 import { SDKProvider } from "@/context/sdk"
 import { SyncProvider, useSync } from "@/context/sync"
 import { LocalProvider } from "@/context/local"
+import { useSDK } from "@/context/sdk"
 
 import { DataProvider } from "@opencode-ai/ui/context"
 import { decode64 } from "@/utils/base64"
@@ -14,6 +15,7 @@ function DirectoryDataProvider(props: ParentProps<{ directory: string }>) {
   const params = useParams()
   const navigate = useNavigate()
   const sync = useSync()
+  const sdk = useSDK()
 
   return (
     <DataProvider
@@ -21,6 +23,15 @@ function DirectoryDataProvider(props: ParentProps<{ directory: string }>) {
       directory={props.directory}
       onNavigateToSession={(sessionID: string) => navigate(`/${params.dir}/session/${sessionID}`)}
       onSessionHref={(sessionID: string) => `/${params.dir}/session/${sessionID}`}
+      onFetchAppResource={async (server, uri) => {
+        const res = await fetch(
+          `${sdk.url}/experimental/mcp-app/resource?uri=${encodeURIComponent(uri)}&server=${encodeURIComponent(server)}`,
+        ).catch(() => undefined)
+        if (!res?.ok) return undefined
+        const data = (await res.json()) as { html: string } | undefined
+        if (typeof data?.html === "string" && data.html.includes("export{")) return undefined
+        return data
+      }}
     >
       <LocalProvider>{props.children}</LocalProvider>
     </DataProvider>

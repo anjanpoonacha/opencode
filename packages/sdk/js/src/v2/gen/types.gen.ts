@@ -1711,6 +1711,18 @@ export type McpResource = {
   client: string
 }
 
+export type McpAppToolEntry = {
+  resourceUri: string
+  visibility?: Array<"model" | "app">
+  maxHeight?: number
+  server: string
+}
+
+export type McpAppResource = {
+  html: string
+  server: string
+}
+
 export type TextPartInput = {
   id?: string
   type: "text"
@@ -2701,6 +2713,96 @@ export type ExperimentalResourceListResponses = {
 
 export type ExperimentalResourceListResponse =
   ExperimentalResourceListResponses[keyof ExperimentalResourceListResponses]
+
+export type ExperimentalMcpAppListData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/experimental/mcp-app"
+}
+
+export type ExperimentalMcpAppListResponses = {
+  /**
+   * MCP App tools
+   */
+  200: {
+    [key: string]: McpAppToolEntry
+  }
+}
+
+export type ExperimentalMcpAppListResponse = ExperimentalMcpAppListResponses[keyof ExperimentalMcpAppListResponses]
+
+export type ExperimentalMcpAppResourceData = {
+  body?: never
+  path?: never
+  query: {
+    directory?: string
+    workspace?: string
+    uri: string
+    server: string
+    force?: boolean
+  }
+  url: "/experimental/mcp-app/resource"
+}
+
+export type ExperimentalMcpAppResourceErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type ExperimentalMcpAppResourceError = ExperimentalMcpAppResourceErrors[keyof ExperimentalMcpAppResourceErrors]
+
+export type ExperimentalMcpAppResourceResponses = {
+  /**
+   * HTML bundle
+   */
+  200: McpAppResource
+}
+
+export type ExperimentalMcpAppResourceResponse =
+  ExperimentalMcpAppResourceResponses[keyof ExperimentalMcpAppResourceResponses]
+
+export type ExperimentalMcpAppToolCallData = {
+  body?: {
+    server: string
+    name: string
+    arguments?: {
+      [key: string]: unknown
+    }
+  }
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/experimental/mcp-app/tool-call"
+}
+
+export type ExperimentalMcpAppToolCallErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type ExperimentalMcpAppToolCallError = ExperimentalMcpAppToolCallErrors[keyof ExperimentalMcpAppToolCallErrors]
+
+export type ExperimentalMcpAppToolCallResponses = {
+  /**
+   * Tool call result
+   */
+  200: {
+    [key: string]: unknown
+  }
+}
+
+export type ExperimentalMcpAppToolCallResponse =
+  ExperimentalMcpAppToolCallResponses[keyof ExperimentalMcpAppToolCallResponses]
 
 export type SessionListData = {
   body?: never

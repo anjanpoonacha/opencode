@@ -24,6 +24,11 @@ import type {
   EventTuiPromptAppend,
   EventTuiSessionSelect,
   EventTuiToastShow,
+  ExperimentalMcpAppListResponses,
+  ExperimentalMcpAppResourceErrors,
+  ExperimentalMcpAppResourceResponses,
+  ExperimentalMcpAppToolCallErrors,
+  ExperimentalMcpAppToolCallResponses,
   ExperimentalResourceListResponses,
   ExperimentalSessionListResponses,
   ExperimentalWorkspaceCreateErrors,
@@ -1053,6 +1058,125 @@ export class Resource extends HeyApiClient {
   }
 }
 
+export class McpApp extends HeyApiClient {
+  /**
+   * List MCP App tools
+   *
+   * List all MCP tools that declare a UI resource via _meta.ui.resourceUri.
+   */
+  public list<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<ExperimentalMcpAppListResponses, unknown, ThrowOnError>({
+      url: "/experimental/mcp-app",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Get MCP App HTML resource
+   *
+   * Fetch and cache the HTML bundle for a ui:// resource URI.
+   */
+  public resource<ThrowOnError extends boolean = false>(
+    parameters: {
+      directory?: string
+      workspace?: string
+      uri: string
+      server: string
+      force?: boolean
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "query", key: "uri" },
+            { in: "query", key: "server" },
+            { in: "query", key: "force" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<
+      ExperimentalMcpAppResourceResponses,
+      ExperimentalMcpAppResourceErrors,
+      ThrowOnError
+    >({
+      url: "/experimental/mcp-app/resource",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Proxy tool call from MCP App iframe
+   *
+   * Forward a tools/call request from an MCP App iframe to the originating MCP server.
+   */
+  public toolCall<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+      server?: string
+      name?: string
+      arguments?: {
+        [key: string]: unknown
+      }
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "body", key: "server" },
+            { in: "body", key: "name" },
+            { in: "body", key: "arguments" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<
+      ExperimentalMcpAppToolCallResponses,
+      ExperimentalMcpAppToolCallErrors,
+      ThrowOnError
+    >({
+      url: "/experimental/mcp-app/tool-call",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+}
+
 export class Experimental extends HeyApiClient {
   private _workspace?: Workspace
   get workspace(): Workspace {
@@ -1067,6 +1191,11 @@ export class Experimental extends HeyApiClient {
   private _resource?: Resource
   get resource(): Resource {
     return (this._resource ??= new Resource({ client: this.client }))
+  }
+
+  private _mcpApp?: McpApp
+  get mcpApp(): McpApp {
+    return (this._mcpApp ??= new McpApp({ client: this.client }))
   }
 }
 

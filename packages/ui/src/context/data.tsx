@@ -26,6 +26,8 @@ export type NavigateToSessionFn = (sessionID: string) => void
 
 export type SessionHrefFn = (sessionID: string) => string
 
+export type FetchAppResourceFn = (server: string, uri: string) => Promise<{ html: string } | undefined>
+
 export const { use: useData, provider: DataProvider } = createSimpleContext({
   name: "Data",
   init: (props: {
@@ -33,6 +35,7 @@ export const { use: useData, provider: DataProvider } = createSimpleContext({
     directory: string
     onNavigateToSession?: NavigateToSessionFn
     onSessionHref?: SessionHrefFn
+    onFetchAppResource?: FetchAppResourceFn
   }) => {
     return {
       get store() {
@@ -43,6 +46,7 @@ export const { use: useData, provider: DataProvider } = createSimpleContext({
       },
       navigateToSession: props.onNavigateToSession,
       sessionHref: props.onSessionHref,
+      fetchAppResource: props.onFetchAppResource,
     }
   },
 })

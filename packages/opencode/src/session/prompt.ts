@@ -898,10 +898,19 @@ export namespace SessionPrompt {
         }
 
         const truncated = await Truncate.output(textParts.join("\n\n"), {}, input.agent)
+        const appMeta = MCP.toolMeta(key)
         const metadata = {
           ...(result.metadata ?? {}),
           truncated: truncated.truncated,
           ...(truncated.truncated && { outputPath: truncated.outputPath }),
+          ...(result.structuredContent ? { structuredContent: result.structuredContent } : {}),
+          ...(appMeta
+            ? {
+                resourceUri: appMeta.resourceUri,
+                server: appMeta.server,
+                ...(appMeta.maxHeight ? { maxHeight: appMeta.maxHeight } : {}),
+              }
+            : {}),
         }
 
         return {

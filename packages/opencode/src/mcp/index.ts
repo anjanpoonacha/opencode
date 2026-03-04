@@ -23,6 +23,7 @@ import { BusEvent } from "../bus/bus-event"
 import { Bus } from "@/bus"
 import { TuiEvent } from "@/cli/cmd/tui/event"
 import open from "open"
+import { Flag } from "../flag/flag"
 
 export namespace MCP {
   const log = Log.create({ service: "mcp" })
@@ -147,7 +148,38 @@ export namespace MCP {
     })
   }
 
-  // Store transports for OAuth servers to allow finishing auth
+  export const AppMeta = z
+    .object({
+      resourceUri: z.string(),
+      visibility: z.array(z.enum(["model", "app"])).optional(),
+      maxHeight: z.number().optional(),
+    })
+    .meta({ ref: "McpAppMeta" })
+  export type AppMeta = z.infer<typeof AppMeta>
+
+  export const AppResource = z
+    .object({
+      html: z.string(),
+      server: z.string(),
+    })
+    .meta({ ref: "McpAppResource" })
+  export type AppResource = z.infer<typeof AppResource>
+
+  const toolMetaRegistry = new Map<string, AppMeta & { server: string }>()
+  const appResourceCache = new Map<string, AppResource>()
+
+  function extractAppMeta(mcpTool: MCPToolDef): AppMeta | undefined {
+    const ui = (mcpTool._meta as Record<string, unknown> | undefined)?.ui as Record<string, unknown> | undefined
+    if (!ui) return undefined
+    const resourceUri =
+      (ui.resourceUri as string | undefined) ??
+      ((mcpTool._meta as Record<string, unknown>)?.["ui/resourceUri"] as string | undefined)
+    if (!resourceUri || !resourceUri.startsWith("ui://")) return undefined
+    const visibility = ui.visibility as Array<"model" | "app"> | undefined
+    const maxHeight = ui.maxHeight as number | undefined
+    return { resourceUri, ...(visibility ? { visibility } : {}), ...(maxHeight ? { maxHeight } : {}) }
+  }
+
   type TransportWithAuth = StreamableHTTPClientTransport | SSEClientTransport
   const pendingOAuthTransports = new Map<string, TransportWithAuth>()
 
@@ -598,6 +630,10 @@ export namespace MCP {
       delete s.clients[name]
     }
     s.status[name] = { status: "disabled" }
+    for (const key of appResourceCache.keys()) {
+      const entry = appResourceCache.get(key)
+      if (entry?.server === name) appResourceCache.delete(key)
+    }
   }
 
   export async function tools() {
@@ -636,7 +672,11 @@ export namespace MCP {
       for (const mcpTool of toolsResult.tools) {
         const sanitizedClientName = clientName.replace(/[^a-zA-Z0-9_-]/g, "_")
         const sanitizedToolName = mcpTool.name.replace(/[^a-zA-Z0-9_-]/g, "_")
-        result[sanitizedClientName + "_" + sanitizedToolName] = await convertMcpTool(mcpTool, client, timeout)
+        const key = sanitizedClientName + "_" + sanitizedToolName
+        const meta = extractAppMeta(mcpTool)
+        if (meta) toolMetaRegistry.set(key, { ...meta, server: sanitizedClientName })
+        if (meta?.visibility && !meta.visibility.includes("model")) continue
+        result[key] = await convertMcpTool(mcpTool, client, timeout)
       }
     }
     return result
@@ -737,6 +777,31 @@ export namespace MCP {
       })
 
     return result
+  }
+
+  export function toolMeta(key: string) {
+    return toolMetaRegistry.get(key)
+  }
+
+  export async function apps() {
+    if (!Flag.OPENCODE_EXPERIMENTAL_MCP_APPS) return {}
+    await tools()
+    return Object.fromEntries(toolMetaRegistry)
+  }
+
+  export async function appResource(server: string, resourceUri: string, force = false) {
+    if (!Flag.OPENCODE_EXPERIMENTAL_MCP_APPS) return undefined
+    if (!force) {
+      const cached = appResourceCache.get(resourceUri)
+      if (cached && !cached.html.includes("export{")) return cached
+    }
+    const result = await readResource(server, resourceUri)
+    if (!result) return undefined
+    const content = result.contents.find((c) => c.mimeType === "text/html;profile=mcp-app" && "text" in c)
+    if (!content || !("text" in content)) return undefined
+    const entry: AppResource = { html: content.text as string, server }
+    appResourceCache.set(resourceUri, entry)
+    return entry
   }
 
   /**

@@ -9,6 +9,9 @@ on:
 jobs:
   sync:
     runs-on: ubuntu-latest
+    env:
+      FEATURE_COMMIT_COUNT: 6
+      FEATURE_BRANCH: feature-commits
     permissions:
       contents: write
       pull-requests: write
@@ -58,15 +61,10 @@ jobs:
           git checkout "v${VERSION}"
           git checkout -b "$BRANCH"
 
-          # Find the base version that feature-commits is built on
-          # by finding the latest upstream tag that's an ancestor of feature-commits
-          BASE_TAG=$(git describe --tags --abbrev=0 --match "v[0-9]*" origin/feature-commits 2>/dev/null || echo "v1.2.10")
-          echo "Feature commits base: $BASE_TAG"
+          # Take the last N commits from feature-commits (oldest first)
+          COMMITS=$(git log "origin/${FEATURE_BRANCH}" -"${FEATURE_COMMIT_COUNT}" --reverse --format="%H")
 
-          # Get commits that are on feature-commits but not in the base tag
-          COMMITS=$(git log origin/feature-commits --reverse --format="%H" ^${BASE_TAG})
-
-          echo "Feature commits to apply:"
+          echo "Picking last ${FEATURE_COMMIT_COUNT} commits from ${FEATURE_BRANCH}:"
           echo "$COMMITS"
 
           RESULTS=""
@@ -76,19 +74,34 @@ jobs:
           for COMMIT in $COMMITS; do
             MSG=$(git log -1 --format="%s" $COMMIT)
             SHORT=$(git rev-parse --short $COMMIT)
-            
+
+            # Skip commits that only touch workflow files (handled by Preserve step)
+            CHANGED=$(git diff-tree --no-commit-id --name-only -r $COMMIT)
+            WORKFLOW_ONLY="true"
+            for F in $CHANGED; do
+              case "$F" in
+                .github/workflows/*) ;;
+                *) WORKFLOW_ONLY="false" ;;
+              esac
+            done
+            if [ "$WORKFLOW_ONLY" = "true" ]; then
+              RESULTS="${RESULTS}| ⏭️ | $SHORT | $MSG (workflow-only, skipped) |\n"
+              echo "Skipped (workflow-only): $MSG"
+              continue
+            fi
+
             echo "Applying: $SHORT $MSG"
-            
+
             if git cherry-pick "$COMMIT" --no-commit; then
               git commit -m "$MSG" --no-verify
-              RESULTS="${RESULTS}| ✅ | \`$SHORT\` | $MSG |\n"
+              RESULTS="${RESULTS}| ✅ | $SHORT | $MSG |\n"
               echo "Success: $MSG"
             else
-              RESULTS="${RESULTS}| ❌ | \`$SHORT\` | $MSG |\n"
+              git cherry-pick --abort 2>/dev/null || git reset --hard HEAD
+              RESULTS="${RESULTS}| ❌ | $SHORT | $MSG |\n"
               FAILED="true"
               CONFLICT_COMMIT="$SHORT"
               echo "Failed: $MSG"
-              # Don't continue after first failure
               break
             fi
           done
@@ -100,21 +113,46 @@ jobs:
           echo "conflict_commit=$CONFLICT_COMMIT" >> $GITHUB_OUTPUT
           echo "branch=$BRANCH" >> $GITHUB_OUTPUT
 
+      - name: Preserve fork workflows
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          # Remove all workflow files (these came from the upstream tag)
+          git rm -rf .github/workflows/ 2>/dev/null || true
+          # Restore only the fork's workflow files from release branch
+          git checkout origin/release -- .github/workflows/
+          git add .github/workflows/
+          # Commit only if workflows actually differ
+          git diff --cached --quiet || git commit -m "preserve fork workflow files" --no-verify
+
       - name: Push sync branch
         if: steps.check.outputs.skip != 'true'
         run: |
           git push origin "${{ steps.sync.outputs.branch }}" --force
 
+      - name: Backup feature branch
+        if: steps.check.outputs.skip != 'true' && steps.sync.outputs.failed == 'true'
+        run: |
+          VERSION="${{ steps.upstream.outputs.version }}"
+          BACKUP="${FEATURE_BRANCH}-backup-v${VERSION}"
+          git push origin "origin/${FEATURE_BRANCH}:refs/heads/${BACKUP}" --no-verify
+          echo "Created backup branch: ${BACKUP}"
+
       - name: Create PR
         if: steps.check.outputs.skip != 'true'
         uses: actions/github-script@v7
+        env:
+          SYNC_VERSION: ${{ steps.upstream.outputs.version }}
+          SYNC_BRANCH: ${{ steps.sync.outputs.branch }}
+          SYNC_FAILED: ${{ steps.sync.outputs.failed }}
+          SYNC_CONFLICT: ${{ steps.sync.outputs.conflict_commit }}
+          SYNC_RESULTS: ${{ steps.sync.outputs.results }}
         with:
           script: |
-            const version = '${{ steps.upstream.outputs.version }}';
-            const branch = '${{ steps.sync.outputs.branch }}';
-            const failed = '${{ steps.sync.outputs.failed }}' === 'true';
-            const conflictCommit = '${{ steps.sync.outputs.conflict_commit }}';
-            const results = `${{ steps.sync.outputs.results }}`;
+            const version = process.env.SYNC_VERSION;
+            const branch = process.env.SYNC_BRANCH;
+            const failed = process.env.SYNC_FAILED === 'true';
+            const conflictCommit = process.env.SYNC_CONFLICT;
+            const results = process.env.SYNC_RESULTS;
 
             let body = `## Sync with upstream v${version}\n\n`;
             body += `### Cherry-pick Results\n\n`;
@@ -123,15 +161,25 @@ jobs:
             body += results;
             body += `\n`;
 
+            const featureBranch = process.env.FEATURE_BRANCH;
+            const commitCount = process.env.FEATURE_COMMIT_COUNT;
+
             if (failed) {
               body += `### ⚠️ Conflicts Detected\n\n`;
               body += `Cherry-pick failed at commit \`${conflictCommit}\`.\n\n`;
-              body += `**To resolve:**\n`;
+              body += `A backup of \`${featureBranch}\` was saved to \`${featureBranch}-backup-v${version}\`.\n\n`;
+              body += `**Step 1: Fix the sync branch conflict**\n`;
               body += `\`\`\`bash\n`;
               body += `git fetch origin ${branch}\n`;
               body += `git checkout ${branch}\n`;
-              body += `git cherry-pick --continue  # or resolve conflicts manually\n`;
+              body += `git cherry-pick --continue  # resolve conflicts manually\n`;
               body += `git push origin ${branch} --force\n`;
+              body += `\`\`\`\n\n`;
+              body += `**Step 2: Rebase ${featureBranch} onto the new upstream tag**\n`;
+              body += `\`\`\`bash\n`;
+              body += `git checkout ${featureBranch}\n`;
+              body += `git rebase --onto v${version} HEAD~${commitCount}\n`;
+              body += `git push origin ${featureBranch} --force\n`;
               body += `\`\`\`\n\n`;
               body += `After resolving, this PR will be ready to merge.\n`;
             } else {

@@ -116,7 +116,7 @@ Object.defineProperty(Flag, "OPENCODE_CLIENT", {
 
 Object.defineProperty(Flag, "OPENCODE_EXPERIMENTAL_MCP_APPS", {
   get() {
-    return truthy("OPENCODE_EXPERIMENTAL") || truthy("OPENCODE_EXPERIMENTAL_MCP_APPS")
+    return true
   },
   enumerable: true,
   configurable: false,

@@ -2193,7 +2193,7 @@ ToolRegistry.register({
 
       bridge.oninitialized = () => {
         if (props.input && Object.keys(props.input).length > 0) {
-          bridge.sendToolInput({ arguments: props.input })
+          bridge.sendToolInput({ arguments: JSON.parse(JSON.stringify(props.input)) })
         }
         const sc = props.metadata?.structuredContent
         if (sc) {
@@ -2206,21 +2206,16 @@ ToolRegistry.register({
 
       bridge.oncalltool = async (params: { name: string; arguments?: Record<string, unknown> }) => {
         const srv = server()
-        if (!srv) return { content: [] }
-        const res = await fetch(new URL("/experimental/mcp-app/tool-call", window.location.origin).href, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ server: srv, name: params.name, arguments: params.arguments ?? {} }),
-        }).catch(() => undefined)
-        if (!res?.ok) return { content: [] }
-        return res.json()
+        if (!srv || !data.callAppTool) return { content: [] }
+        return data.callAppTool(srv, params.name, params.arguments)
       }
 
       bridge.onsizechange = ({ height: h }) => {
         if (h != null) setHeight(Math.min(h, cap))
       }
 
-      const transport = new PostMessageTransport(frame.contentWindow!, frame.contentWindow!)
+      if (!frame.contentWindow) return
+      const transport = new PostMessageTransport(frame.contentWindow, frame.contentWindow)
       bridge.connect(transport).catch(() => {})
 
       cleanup = () => {

@@ -32,6 +32,15 @@ function DirectoryDataProvider(props: ParentProps<{ directory: string }>) {
         if (typeof data?.html === "string" && data.html.includes("export{")) return undefined
         return data
       }}
+      onCallAppTool={async (server, name, args) => {
+        const res = await fetch(`${sdk.url}/experimental/mcp-app/tool-call`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ server, name, arguments: args ?? {} }),
+        }).catch(() => undefined)
+        if (!res?.ok) return { content: [] }
+        return res.json()
+      }}
     >
       <LocalProvider>{props.children}</LocalProvider>
     </DataProvider>

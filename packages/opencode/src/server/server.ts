@@ -559,8 +559,45 @@ export namespace Server {
           },
         )
         .all("/*", async (c) => {
+          const uiDir = process.env.OPENCODE_UI_DIR
+          if (uiDir) {
+            const reqPath = decodeURIComponent(c.req.path)
+            const filePath = reqPath === "/" ? uiDir + "/index.html" : uiDir + reqPath
+            const file = Bun.file(filePath)
+            if (await file.exists()) {
+              const ext = filePath.split(".").pop() ?? ""
+              const mimeTypes: Record<string, string> = {
+                html: "text/html; charset=utf-8",
+                js: "application/javascript",
+                css: "text/css",
+                json: "application/json",
+                svg: "image/svg+xml",
+                png: "image/png",
+                jpg: "image/jpeg",
+                jpeg: "image/jpeg",
+                gif: "image/gif",
+                ico: "image/x-icon",
+                woff: "font/woff",
+                woff2: "font/woff2",
+                ttf: "font/ttf",
+                aac: "audio/aac",
+                mp3: "audio/mpeg",
+                wav: "audio/wav",
+                webp: "image/webp",
+              }
+              return new Response(file, {
+                headers: { "Content-Type": mimeTypes[ext] ?? "application/octet-stream" },
+              })
+            }
+            // SPA fallback: serve index.html for client-side routes
+            const indexFile = Bun.file(uiDir + "/index.html")
+            if (await indexFile.exists()) {
+              return new Response(indexFile, {
+                headers: { "Content-Type": "text/html; charset=utf-8" },
+              })
+            }
+          }
           const path = c.req.path
-
           const response = await proxy(`https://app.opencode.ai${path}`, {
             ...c.req,
             headers: {

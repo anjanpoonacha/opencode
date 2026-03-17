@@ -12,8 +12,6 @@ import { useLanguage } from "@/context/language"
 import { useNotification } from "@/context/notification"
 import { ProjectIcon, SessionItem, type SessionItemProps } from "./sidebar-items"
 import { childMapByParent, displayName, sortedRootSessions } from "./helpers"
-import { projectSelected, projectTileActive } from "./sidebar-project-helpers"
-import { type Session } from "@opencode-ai/sdk/v2/client"
 
 export type ProjectSidebarContext = {
   currentDir: Accessor<string>
@@ -32,7 +30,7 @@ export type ProjectSidebarContext = {
   workspacesEnabled: (project: LocalProject) => boolean
   workspaceIds: (project: LocalProject) => string[]
   workspaceLabel: (directory: string, branch?: string, projectId?: string) => string
-  sessionProps: Omit<SessionItemProps, "session" | "slug" | "children" | "mobile" | "dense" | "popover" | "allSessions">
+  sessionProps: Omit<SessionItemProps, "session" | "list" | "slug" | "children" | "mobile" | "dense" | "popover">
   setHoverSession: (id: string | undefined) => void
 }
 
@@ -190,10 +188,8 @@ const ProjectPreviewPanel = (props: {
   workspaces: Accessor<string[]>
   label: (directory: string) => string
   projectSessions: Accessor<ReturnType<typeof sortedRootSessions>>
-  projectAllSessions: Accessor<Session[]>
   projectChildren: Accessor<Map<string, string[]>>
   workspaceSessions: (directory: string) => ReturnType<typeof sortedRootSessions>
-  workspaceAllSessions: (directory: string) => Session[]
   workspaceChildren: (directory: string) => Map<string, string[]>
   setOpen: (value: boolean) => void
   ctx: ProjectSidebarContext
@@ -208,17 +204,17 @@ const ProjectPreviewPanel = (props: {
       <Show
         when={props.workspaceEnabled()}
         fallback={
-          <For each={props.projectSessions()}>
+          <For each={props.projectSessions().slice(0, 2)}>
             {(session) => (
               <SessionItem
                 {...props.ctx.sessionProps}
                 session={session}
+                list={props.projectSessions()}
                 slug={base64Encode(props.project.worktree)}
                 dense
                 mobile={props.mobile}
                 popover={false}
                 children={props.projectChildren()}
-                allSessions={props.projectAllSessions()}
               />
             )}
           </For>
@@ -227,7 +223,6 @@ const ProjectPreviewPanel = (props: {
         <For each={props.workspaces()}>
           {(directory) => {
             const sessions = createMemo(() => props.workspaceSessions(directory))
-            const allSessions = createMemo(() => props.workspaceAllSessions(directory))
             const children = createMemo(() => props.workspaceChildren(directory))
             return (
               <div class="flex flex-col gap-1">
@@ -237,17 +232,17 @@ const ProjectPreviewPanel = (props: {
                   </div>
                   <span class="truncate text-14-medium text-text-base">{props.label(directory)}</span>
                 </div>
-                <For each={sessions()}>
+                <For each={sessions().slice(0, 2)}>
                   {(session) => (
                     <SessionItem
                       {...props.ctx.sessionProps}
                       session={session}
+                      list={sessions()}
                       slug={base64Encode(directory)}
                       dense
                       mobile={props.mobile}
                       popover={false}
                       children={children()}
-                      allSessions={allSessions()}
                     />
                   )}
                 </For>
@@ -283,8 +278,10 @@ export const SortableProject = (props: {
   const globalSync = useGlobalSync()
   const language = useLanguage()
   const sortable = createSortable(props.project.worktree)
-  const selected = createMemo(() =>
-    projectSelected(props.ctx.currentDir(), props.project.worktree, props.project.sandboxes),
+  const selected = createMemo(
+    () =>
+      props.project.worktree === props.ctx.currentDir() ||
+      props.project.sandboxes?.includes(props.ctx.currentDir()) === true,
   )
   const workspaces = createMemo(() => props.ctx.workspaceIds(props.project).slice(0, 2))
   const workspaceEnabled = createMemo(() => props.ctx.workspacesEnabled(props.project))
@@ -297,15 +294,8 @@ export const SortableProject = (props: {
 
   const preview = createMemo(() => !props.mobile && props.ctx.sidebarOpened())
   const overlay = createMemo(() => !props.mobile && !props.ctx.sidebarOpened())
-  const active = createMemo(() =>
-    projectTileActive({
-      menu: state.menu,
-      preview: preview(),
-      open: state.open,
-      overlay: overlay(),
-      hoverProject: props.ctx.hoverProject(),
-      worktree: props.project.worktree,
-    }),
+  const active = createMemo(
+    () => state.menu || (preview() ? state.open : overlay() && props.ctx.hoverProject() === props.project.worktree),
   )
 
   createEffect(() => {
@@ -329,16 +319,11 @@ export const SortableProject = (props: {
   }
 
   const projectStore = createMemo(() => globalSync.child(props.project.worktree, { bootstrap: false })[0])
-  const projectSessions = createMemo(() => sortedRootSessions(projectStore(), props.sortNow()).slice(0, 2))
-  const projectAllSessions = createMemo(() => projectStore().session)
+  const projectSessions = createMemo(() => sortedRootSessions(projectStore(), props.sortNow()))
   const projectChildren = createMemo(() => childMapByParent(projectStore().session))
   const workspaceSessions = (directory: string) => {
     const [data] = globalSync.child(directory, { bootstrap: false })
-    return sortedRootSessions(data, props.sortNow()).slice(0, 2)
-  }
-  const workspaceAllSessions = (directory: string) => {
-    const [data] = globalSync.child(directory, { bootstrap: false })
-    return data.session
+    return sortedRootSessions(data, props.sortNow())
   }
   const workspaceChildren = (directory: string) => {
     const [data] = globalSync.child(directory, { bootstrap: false })
@@ -396,10 +381,8 @@ export const SortableProject = (props: {
             workspaces={workspaces}
             label={label}
             projectSessions={projectSessions}
-            projectAllSessions={projectAllSessions}
             projectChildren={projectChildren}
             workspaceSessions={workspaceSessions}
-            workspaceAllSessions={workspaceAllSessions}
             workspaceChildren={workspaceChildren}
             setOpen={(value) => setState("open", value)}
             ctx={props.ctx}

@@ -10,7 +10,6 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     env:
-      FEATURE_COMMIT_COUNT: 6
       FEATURE_BRANCH: feature-commits
     permissions:
       contents: write
@@ -57,85 +56,54 @@ jobs:
           VERSION="${{ steps.upstream.outputs.version }}"
           BRANCH="sync/v${VERSION}"
 
-          # Create sync branch from upstream tag
-          git checkout "v${VERSION}"
+          # Start from feature-commits (always matches release — no stale base)
+          git checkout "origin/${FEATURE_BRANCH}"
           git checkout -b "$BRANCH"
 
-          # Take the last N commits from feature-commits (oldest first)
-          COMMITS=$(git log "origin/${FEATURE_BRANCH}" -"${FEATURE_COMMIT_COUNT}" --reverse --format="%H")
+          # Find the previous upstream version from the last sync commit on this branch
+          PREV_VERSION=$(git log --format="%s" | grep "^sync: upstream v" | head -1 | sed 's/sync: upstream v//')
+          echo "Previous upstream: v${PREV_VERSION}"
+          echo "New upstream: v${VERSION}"
 
-          echo "Picking last ${FEATURE_COMMIT_COUNT} commits from ${FEATURE_BRANCH}:"
-          echo "$COMMITS"
-
-          RESULTS=""
           FAILED="false"
-          CONFLICT_COMMIT=""
 
-          for COMMIT in $COMMITS; do
-            MSG=$(git log -1 --format="%s" $COMMIT)
-            SHORT=$(git rev-parse --short $COMMIT)
+          if [ -n "$PREV_VERSION" ] && git rev-parse "v${PREV_VERSION}" >/dev/null 2>&1; then
+            # Apply only the delta between previous and new upstream (minimal conflicts)
+            echo "Applying delta: v${PREV_VERSION} -> v${VERSION}"
+            git diff "v${PREV_VERSION}" "v${VERSION}" | git apply --3way
 
-            # Skip commits that only touch fork-infrastructure files (handled by Preserve step)
-            CHANGED=$(git diff-tree --no-commit-id --name-only -r $COMMIT)
-            FORK_INFRA_ONLY="true"
-            for F in $CHANGED; do
-              case "$F" in
-                .github/workflows/*|scripts/publish-fork.ts) ;;
-                *) FORK_INFRA_ONLY="false" ;;
-              esac
-            done
-            if [ "$FORK_INFRA_ONLY" = "true" ]; then
-              RESULTS="${RESULTS}| ⏭️ | $SHORT | $MSG (fork-infra, skipped) |\n"
-              echo "Skipped (fork-infra): $MSG"
-              continue
-            fi
-
-            echo "Applying: $SHORT $MSG"
-
-            if git cherry-pick "$COMMIT" --no-commit; then
-              git commit -m "$MSG" --no-verify
-              RESULTS="${RESULTS}| ✅ | $SHORT | $MSG |\n"
-              echo "Success: $MSG"
-            else
-              git cherry-pick --abort 2>/dev/null || git reset --hard HEAD
-              RESULTS="${RESULTS}| ❌ | $SHORT | $MSG |\n"
+            if [ $? -ne 0 ]; then
+              echo "Delta apply failed — falling back to conflict list"
+              CONFLICTS=$(git diff --name-only --diff-filter=U | tr '\n' ' ')
+              echo "Conflicting files: $CONFLICTS"
               FAILED="true"
-              CONFLICT_COMMIT="$SHORT"
-              echo "Failed: $MSG"
-              break
+              git apply --abort 2>/dev/null || git reset --hard HEAD
+            else
+              git add -A
+              git diff --cached --quiet || git commit -m "sync: upstream v${VERSION}" --no-verify
             fi
-          done
+          else
+            echo "No previous sync found — applying full upstream"
+            git merge --squash "v${VERSION}" -X theirs --no-commit
+            git add -A
+            git diff --cached --quiet || git commit -m "sync: upstream v${VERSION}" --no-verify
+          fi
 
-          echo "results<<EOF" >> $GITHUB_OUTPUT
-          echo -e "$RESULTS" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
           echo "failed=$FAILED" >> $GITHUB_OUTPUT
-          echo "conflict_commit=$CONFLICT_COMMIT" >> $GITHUB_OUTPUT
           echo "branch=$BRANCH" >> $GITHUB_OUTPUT
 
       - name: Preserve fork workflows
         if: steps.check.outputs.skip != 'true'
         run: |
-          # Remove all workflow files (these came from the upstream tag)
-          git rm -rf .github/workflows/ 2>/dev/null || true
-          # Restore fork-infrastructure files from release branch
+          # Ensure fork-infrastructure files always match release (not upstream)
           git checkout origin/release -- .github/workflows/ scripts/publish-fork.ts
           git add .github/workflows/ scripts/publish-fork.ts
-          # Commit only if fork-infra files actually differ
           git diff --cached --quiet || git commit -m "preserve fork workflow files" --no-verify
 
       - name: Push sync branch
         if: steps.check.outputs.skip != 'true'
         run: |
           git push origin "${{ steps.sync.outputs.branch }}" --force
-
-      - name: Backup feature branch
-        if: steps.check.outputs.skip != 'true' && steps.sync.outputs.failed == 'true'
-        run: |
-          VERSION="${{ steps.upstream.outputs.version }}"
-          BACKUP="${FEATURE_BRANCH}-backup-v${VERSION}"
-          git push origin "origin/${FEATURE_BRANCH}:refs/heads/${BACKUP}" --no-verify
-          echo "Created backup branch: ${BACKUP}"
 
       - name: Create PR
         if: steps.check.outputs.skip != 'true'
@@ -144,50 +112,32 @@ jobs:
           SYNC_VERSION: ${{ steps.upstream.outputs.version }}
           SYNC_BRANCH: ${{ steps.sync.outputs.branch }}
           SYNC_FAILED: ${{ steps.sync.outputs.failed }}
-          SYNC_CONFLICT: ${{ steps.sync.outputs.conflict_commit }}
-          SYNC_RESULTS: ${{ steps.sync.outputs.results }}
+          FEATURE_BRANCH: ${{ env.FEATURE_BRANCH }}
         with:
           script: |
             const version = process.env.SYNC_VERSION;
             const branch = process.env.SYNC_BRANCH;
             const failed = process.env.SYNC_FAILED === 'true';
-            const conflictCommit = process.env.SYNC_CONFLICT;
-            const results = process.env.SYNC_RESULTS;
 
             let body = `## Sync with upstream v${version}\n\n`;
-            body += `### Cherry-pick Results\n\n`;
-            body += `| Status | Commit | Message |\n`;
-            body += `|--------|--------|--------|\n`;
-            body += results;
-            body += `\n`;
-
-            const featureBranch = process.env.FEATURE_BRANCH;
-            const commitCount = process.env.FEATURE_COMMIT_COUNT;
 
             if (failed) {
               body += `### ⚠️ Conflicts Detected\n\n`;
-              body += `Cherry-pick failed at commit \`${conflictCommit}\`.\n\n`;
-              body += `A backup of \`${featureBranch}\` was saved to \`${featureBranch}-backup-v${version}\`.\n\n`;
-              body += `**Step 1: Fix the sync branch conflict**\n`;
+              body += `The upstream delta could not be applied cleanly.\n\n`;
+              body += `**To fix:**\n`;
               body += `\`\`\`bash\n`;
               body += `git fetch origin ${branch}\n`;
               body += `git checkout ${branch}\n`;
-              body += `git cherry-pick --continue  # resolve conflicts manually\n`;
+              body += `# Resolve conflicts, then:\n`;
+              body += `git add -A && git commit -m "sync: upstream v${version}"\n`;
               body += `git push origin ${branch} --force\n`;
-              body += `\`\`\`\n\n`;
-              body += `**Step 2: Rebase ${featureBranch} onto the new upstream tag**\n`;
-              body += `\`\`\`bash\n`;
-              body += `git checkout ${featureBranch}\n`;
-              body += `git rebase --onto v${version} HEAD~${commitCount}\n`;
-              body += `git push origin ${featureBranch} --force\n`;
-              body += `\`\`\`\n\n`;
-              body += `After resolving, this PR will be ready to merge.\n`;
+              body += `\`\`\`\n`;
             } else {
-              body += `### ✅ All commits applied successfully!\n\n`;
-              body += `This PR is ready to merge.\n`;
+              body += `### ✅ Clean sync — ready to merge.\n\n`;
+              body += `Applied upstream delta from previous version to v${version}.\n`;
+              body += `All fork customizations preserved from \`feature-commits\`.\n`;
             }
 
-            // Check for existing PR
             const { data: prs } = await github.rest.pulls.list({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -196,7 +146,6 @@ jobs:
             });
 
             if (prs.length > 0) {
-              // Update existing PR
               await github.rest.pulls.update({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
@@ -205,7 +154,6 @@ jobs:
               });
               console.log(`Updated PR #${prs[0].number}`);
             } else {
-              // Create new PR
               const { data: pr } = await github.rest.pulls.create({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
@@ -215,15 +163,23 @@ jobs:
                 body: body
               });
               console.log(`Created PR #${pr.number}`);
-              
-              // Auto-merge if no conflicts
+
               if (!failed) {
                 await github.rest.pulls.merge({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
                   pull_number: pr.number,
-                  merge_method: 'merge'
+                  merge_method: 'rebase'
                 });
                 console.log(`Auto-merged PR #${pr.number}`);
+
+                // Tag release to mark this version as synced
+                await github.rest.git.createRef({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  ref: `refs/tags/v${version}-anjan`,
+                  sha: pr.head.sha
+                });
+                console.log(`Tagged v${version}-anjan`);
               }
             }

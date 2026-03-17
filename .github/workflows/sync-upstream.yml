@@ -75,18 +75,18 @@ jobs:
             MSG=$(git log -1 --format="%s" $COMMIT)
             SHORT=$(git rev-parse --short $COMMIT)
 
-            # Skip commits that only touch workflow files (handled by Preserve step)
+            # Skip commits that only touch fork-infrastructure files (handled by Preserve step)
             CHANGED=$(git diff-tree --no-commit-id --name-only -r $COMMIT)
-            WORKFLOW_ONLY="true"
+            FORK_INFRA_ONLY="true"
             for F in $CHANGED; do
               case "$F" in
-                .github/workflows/*) ;;
-                *) WORKFLOW_ONLY="false" ;;
+                .github/workflows/*|scripts/publish-fork.ts) ;;
+                *) FORK_INFRA_ONLY="false" ;;
               esac
             done
-            if [ "$WORKFLOW_ONLY" = "true" ]; then
-              RESULTS="${RESULTS}| ⏭️ | $SHORT | $MSG (workflow-only, skipped) |\n"
-              echo "Skipped (workflow-only): $MSG"
+            if [ "$FORK_INFRA_ONLY" = "true" ]; then
+              RESULTS="${RESULTS}| ⏭️ | $SHORT | $MSG (fork-infra, skipped) |\n"
+              echo "Skipped (fork-infra): $MSG"
               continue
             fi
 
@@ -118,10 +118,10 @@ jobs:
         run: |
           # Remove all workflow files (these came from the upstream tag)
           git rm -rf .github/workflows/ 2>/dev/null || true
-          # Restore only the fork's workflow files from release branch
-          git checkout origin/release -- .github/workflows/
-          git add .github/workflows/
-          # Commit only if workflows actually differ
+          # Restore fork-infrastructure files from release branch
+          git checkout origin/release -- .github/workflows/ scripts/publish-fork.ts
+          git add .github/workflows/ scripts/publish-fork.ts
+          # Commit only if fork-infra files actually differ
           git diff --cached --quiet || git commit -m "preserve fork workflow files" --no-verify
 
       - name: Push sync branch

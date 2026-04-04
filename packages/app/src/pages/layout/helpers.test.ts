@@ -11,8 +11,10 @@ import {
   displayName,
   effectiveWorkspaceOrder,
   errorMessage,
+  getChildSessions,
   hasProjectPermissions,
   latestRootSession,
+  validateParentIDs,
   workspaceKey,
 } from "./helpers"
 
@@ -207,5 +209,78 @@ describe("layout workspace helpers", () => {
     expect(errorMessage({ data: { message: "boom" } }, "fallback")).toBe("boom")
     expect(errorMessage(new Error("broken"), "fallback")).toBe("broken")
     expect(errorMessage("unknown", "fallback")).toBe("fallback")
+  })
+})
+
+const mockSession = (id: string, overrides?: Partial<Session>) =>
+  ({
+    id,
+    slug: "",
+    projectID: "",
+    title: "",
+    version: "",
+    directory: "/test",
+    time: { created: Date.now(), updated: Date.now() },
+    ...overrides,
+  }) as Session
+
+describe("getChildSessions", () => {
+  test("filters by parentID", () => {
+    const sessions: Session[] = [
+      mockSession("child-1", { parentID: "parent-a" }),
+      mockSession("child-2", { parentID: "parent-b" }),
+      mockSession("child-3", { parentID: "parent-a" }),
+      mockSession("root", {}),
+    ]
+
+    const childrenA = getChildSessions(sessions, "parent-a")
+    expect(childrenA.map((s) => s.id)).toEqual(expect.arrayContaining(["child-1", "child-3"]))
+    expect(childrenA).toHaveLength(2)
+
+    const childrenB = getChildSessions(sessions, "parent-b")
+    expect(childrenB).toHaveLength(1)
+    expect(childrenB[0].id).toBe("child-2")
+
+    expect(getChildSessions(sessions, "non-existent")).toHaveLength(0)
+  })
+
+  test("filters out archived sessions", () => {
+    const sessions: Session[] = [
+      mockSession("active-1", { parentID: "parent" }),
+      mockSession("active-2", { parentID: "parent" }),
+      mockSession("archived-1", {
+        parentID: "parent",
+        time: { created: Date.now(), updated: Date.now(), archived: Date.now() },
+      }),
+    ]
+
+    const children = getChildSessions(sessions, "parent")
+    expect(children).toHaveLength(2)
+    expect(children.map((s) => s.id)).toEqual(expect.arrayContaining(["active-1", "active-2"]))
+  })
+})
+
+describe("validateParentIDs", () => {
+  test("returns valid when all parentID references exist", () => {
+    const sessions: Session[] = [
+      mockSession("root"),
+      mockSession("child-1", { parentID: "root" }),
+      mockSession("grandchild", { parentID: "child-1" }),
+    ]
+
+    const result = validateParentIDs(sessions)
+    expect(result.valid).toBe(true)
+    expect(result.orphaned).toHaveLength(0)
+  })
+
+  test("returns invalid when parentID references are missing", () => {
+    const sessions: Session[] = [
+      mockSession("root"),
+      mockSession("orphaned-1", { parentID: "non-existent" }),
+    ]
+
+    const result = validateParentIDs(sessions)
+    expect(result.valid).toBe(false)
+    expect(result.orphaned).toContain("orphaned-1")
   })
 })

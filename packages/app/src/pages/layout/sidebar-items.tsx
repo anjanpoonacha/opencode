@@ -1,5 +1,6 @@
 import type { Message, Session, TextPart, UserMessage } from "@opencode-ai/sdk/v2/client"
 import { Avatar } from "@opencode-ai/ui/avatar"
+import { Collapsible } from "@opencode-ai/ui/collapsible"
 import { HoverCard } from "@opencode-ai/ui/hover-card"
 import { Icon } from "@opencode-ai/ui/icon"
 import { IconButton } from "@opencode-ai/ui/icon-button"
@@ -17,7 +18,9 @@ import { useNotification } from "@/context/notification"
 import { usePermission } from "@/context/permission"
 import { messageAgentColor } from "@/utils/agent"
 import { sessionPermissionRequest } from "../session/composer/session-request-tree"
-import { hasProjectPermissions } from "./helpers"
+import { getChildSessions, hasProjectPermissions } from "./helpers"
+import { useSessionTree, SessionTreeContext } from "./sidebar-tree-context"
+import { useExpandedSessions } from "./use-expanded-sessions"
 
 const OPENCODE_PROJECT_ID = "4b0ea68d7af9a6031a7ffda7ad66e0cb83315750"
 
@@ -153,49 +156,34 @@ const SessionHoverPreview = (props: {
   messageLabel: (message: Message) => string | undefined
   onMessageSelect: (message: Message) => void
   trigger: JSX.Element
-}): JSX.Element => {
-  let ref: HTMLDivElement | undefined
-
-  return (
-    <HoverCard
-      openDelay={1000}
-      closeDelay={props.sidebarHovering() ? 600 : 0}
-      placement="right-start"
-      gutter={16}
-      shift={-2}
-      trigger={
-        <div ref={ref} class="min-w-0 w-full">
-          {props.trigger}
-        </div>
-      }
-      open={props.hoverSession() === props.session.id}
-      onOpenChange={(open) => {
-        if (!open) {
-          props.setHoverSession(undefined)
-          return
-        }
-        if (!ref?.matches(":hover")) return
-        props.setHoverSession(props.session.id)
-      }}
+}): JSX.Element => (
+  <HoverCard
+    openDelay={1000}
+    closeDelay={props.sidebarHovering() ? 600 : 0}
+    placement="right-start"
+    gutter={16}
+    shift={-2}
+    trigger={props.trigger}
+    open={props.hoverSession() === props.session.id}
+    onOpenChange={(open) => props.setHoverSession(open ? props.session.id : undefined)}
+  >
+    <Show
+      when={props.hoverReady()}
+      fallback={<div class="text-12-regular text-text-weak">{props.language.t("session.messages.loading")}</div>}
     >
-      <Show
-        when={props.hoverReady()}
-        fallback={<div class="text-12-regular text-text-weak">{props.language.t("session.messages.loading")}</div>}
-      >
-        <div class="overflow-y-auto overflow-x-hidden max-h-72 h-full">
-          <MessageNav
-            messages={props.hoverMessages() ?? []}
-            current={undefined}
-            getLabel={props.messageLabel}
-            onMessageSelect={props.onMessageSelect}
-            size="normal"
-            class="w-60"
-          />
-        </div>
-      </Show>
-    </HoverCard>
-  )
-}
+      <div class="overflow-y-auto overflow-x-hidden max-h-72 h-full">
+        <MessageNav
+          messages={props.hoverMessages() ?? []}
+          current={undefined}
+          getLabel={props.messageLabel}
+          onMessageSelect={props.onMessageSelect}
+          size="normal"
+          class="w-60"
+        />
+      </div>
+    </Show>
+  </HoverCard>
+)
 
 export const SessionItem = (props: SessionItemProps): JSX.Element => {
   const params = useParams()
@@ -205,6 +193,7 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
   const notification = useNotification()
   const permission = usePermission()
   const globalSync = useGlobalSync()
+  const tree = useSessionTree()
   const unseenCount = createMemo(() => notification.session.unseenCount(props.session.id))
   const hasError = createMemo(() => notification.session.unseenHasError(props.session.id))
   const [sessionStore] = globalSync.child(props.session.directory)
@@ -240,6 +229,10 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
   const hoverAllowed = createMemo(() => !props.mobile && props.sidebarExpanded())
   const hoverEnabled = createMemo(() => (props.popover ?? true) && hoverAllowed())
   const isActive = createMemo(() => props.session.id === params.id)
+
+  const childSessions = createMemo(() => getChildSessions(tree.allSessions(), props.session.id))
+  const hasChildren = createMemo(() => childSessions().length > 0)
+  const expanded = createMemo(() => tree.expanded(props.session.id))
 
   const warm = (span: number, priority: "high" | "low") => {
     const nav = props.navList?.()
@@ -309,73 +302,135 @@ export const SessionItem = (props: SessionItemProps): JSX.Element => {
   return (
     <div
       data-session-id={props.session.id}
-      class="group/session relative w-full min-w-0 rounded-md cursor-default pl-2 pr-3 transition-colors
-             hover:bg-surface-raised-base-hover [&:has(:focus-visible)]:bg-surface-raised-base-hover has-[[data-expanded]]:bg-surface-raised-base-hover has-[.active]:bg-surface-base-active"
+      class="group/session relative w-full rounded-md cursor-default pl-2 pr-0 transition-colors
+             [&:has(:focus-visible)]:bg-surface-raised-base-hover"
     >
-      <div class="flex min-w-0 items-center gap-1">
-        <div class="min-w-0 flex-1">
-          <Show
-            when={hoverEnabled()}
-            fallback={
-              <Tooltip
-                placement={props.mobile ? "bottom" : "right"}
-                value={props.session.title}
-                gutter={10}
-                class="min-w-0 w-full"
-              >
-                {item}
-              </Tooltip>
-            }
-          >
-            <SessionHoverPreview
-              mobile={props.mobile}
-              nav={props.nav}
-              hoverSession={props.hoverSession}
-              session={props.session}
-              sidebarHovering={props.sidebarHovering}
-              hoverReady={hoverReady}
-              hoverMessages={hoverMessages}
-              language={language}
-              isActive={isActive}
-              slug={props.slug}
-              setHoverSession={props.setHoverSession}
-              messageLabel={messageLabel}
-              onMessageSelect={(message) => {
-                if (!isActive())
-                  layout.pendingMessage.set(`${base64Encode(props.session.directory)}/${props.session.id}`, message.id)
-
-                navigate(`${props.slug}/session/${props.session.id}#message-${message.id}`)
-              }}
-              trigger={item}
-            />
-          </Show>
-        </div>
-
+      <Collapsible
+        open={expanded()}
+        onOpenChange={() => tree.toggle(props.session.id)}
+        class="w-full"
+        variant="ghost"
+      >
         <div
-          class="shrink-0 overflow-hidden transition-[width,opacity]"
-          classList={{
-            "w-6 opacity-100 pointer-events-auto": !!props.mobile,
-            "w-0 opacity-0 pointer-events-none": !props.mobile,
-            "group-hover/session:w-6 group-hover/session:opacity-100 group-hover/session:pointer-events-auto": true,
-            "group-focus-within/session:w-6 group-focus-within/session:opacity-100 group-focus-within/session:pointer-events-auto": true,
-          }}
+          class="flex items-center w-full rounded-md transition-colors hover:bg-surface-raised-base-hover pr-3"
+          classList={{ "bg-surface-base-active": isActive() }}
         >
-          <Tooltip value={language.t("common.archive")} placement="top">
-            <IconButton
-              icon="archive"
-              variant="ghost"
-              class="size-6 rounded-md"
-              aria-label={language.t("common.archive")}
-              onClick={(event) => {
-                event.preventDefault()
-                event.stopPropagation()
-                void props.archiveSession(props.session)
-              }}
-            />
-          </Tooltip>
+          <Show when={hasChildren()}>
+            <Collapsible.Trigger class="flex items-center justify-center w-6 hover:bg-surface-base-hover rounded transition-colors self-center shrink-0">
+              <Icon name={expanded() ? "chevron-down" : "chevron-right"} size="small" />
+            </Collapsible.Trigger>
+          </Show>
+          <Show when={!hasChildren()}>
+            <div class="w-6 shrink-0 self-center" />
+          </Show>
+          <div class="flex-1 min-w-0">
+            <Show
+              when={hoverEnabled()}
+              fallback={
+                <Tooltip placement={props.mobile ? "bottom" : "right"} value={props.session.title} gutter={10}>
+                  {item}
+                </Tooltip>
+              }
+            >
+              <SessionHoverPreview
+                mobile={props.mobile}
+                nav={props.nav}
+                hoverSession={props.hoverSession}
+                session={props.session}
+                sidebarHovering={props.sidebarHovering}
+                hoverReady={hoverReady}
+                hoverMessages={hoverMessages}
+                language={language}
+                isActive={isActive}
+                slug={props.slug}
+                setHoverSession={props.setHoverSession}
+                messageLabel={messageLabel}
+                onMessageSelect={(message) => {
+                  if (!isActive())
+                    layout.pendingMessage.set(
+                      `${base64Encode(props.session.directory)}/${props.session.id}`,
+                      message.id,
+                    )
+                  navigate(`${props.slug}/session/${props.session.id}#message-${message.id}`)
+                }}
+                trigger={item}
+              />
+            </Show>
+          </div>
         </div>
+        <Collapsible.Content>
+          <div class="flex flex-col gap-0.5 pl-4">
+            <For each={childSessions()}>
+              {(child) => (
+                <SessionItem
+                  session={child}
+                  list={props.list}
+                  navList={props.navList}
+                  slug={props.slug}
+                  mobile={props.mobile}
+                  dense={props.dense}
+                  popover={props.popover}
+                  children={props.children}
+                  sidebarExpanded={props.sidebarExpanded}
+                  sidebarHovering={props.sidebarHovering}
+                  nav={props.nav}
+                  hoverSession={props.hoverSession}
+                  setHoverSession={props.setHoverSession}
+                  clearHoverProjectSoon={props.clearHoverProjectSoon}
+                  prefetchSession={props.prefetchSession}
+                  archiveSession={props.archiveSession}
+                />
+              )}
+            </For>
+          </div>
+        </Collapsible.Content>
+      </Collapsible>
+
+      <div
+        class={`absolute ${props.dense ? "top-0.5 right-0.5" : "top-1 right-1"} flex items-center gap-0.5 transition-opacity`}
+        classList={{
+          "opacity-100 pointer-events-auto": !!props.mobile,
+          "opacity-0 pointer-events-none": !props.mobile,
+          "group-hover/session:opacity-100 group-hover/session:pointer-events-auto": true,
+          "group-focus-within/session:opacity-100 group-focus-within/session:pointer-events-auto": true,
+        }}
+      >
+        <Tooltip value={language.t("common.archive")} placement="top">
+          <IconButton
+            icon="archive"
+            variant="ghost"
+            class="size-6 rounded-md"
+            aria-label={language.t("common.archive")}
+            onClick={(event) => {
+              event.preventDefault()
+              event.stopPropagation()
+              void props.archiveSession(props.session)
+            }}
+          />
+        </Tooltip>
       </div>
     </div>
+  )
+}
+
+export type SessionTreeProviderProps = {
+  directory: () => string
+  allSessions: () => Session[]
+  children: JSX.Element
+}
+
+export const SessionTreeProvider = (props: SessionTreeProviderProps): JSX.Element => {
+  const expansion = useExpandedSessions(props.directory, props.allSessions)
+  return (
+    <SessionTreeContext.Provider
+      value={{
+        allSessions: props.allSessions,
+        expanded: expansion.expanded,
+        toggle: expansion.toggle,
+      }}
+    >
+      {props.children}
+    </SessionTreeContext.Provider>
   )
 }
 

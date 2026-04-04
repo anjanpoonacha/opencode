@@ -176,6 +176,7 @@ export const layer: Layer.Layer<Service, never, HttpClient.HttpClient | ChildPro
       const methodImpl = Effect.fn("Installation.method")(function* () {
         if (process.execPath.includes(path.join(".opencode", "bin"))) return "curl" as Method
         if (process.execPath.includes(path.join(".local", "bin"))) return "curl" as Method
+        if (process.execPath.includes(path.join(".bun", "install"))) return "bun" as Method
         const exec = process.execPath.toLowerCase()
 
         const checks: Array<{ name: Method; command: () => Effect.Effect<string> }> = [
@@ -199,7 +200,11 @@ export const layer: Layer.Layer<Service, never, HttpClient.HttpClient | ChildPro
         for (const check of checks) {
           const output = yield* check.command()
           const installedName =
-            check.name === "brew" || check.name === "choco" || check.name === "scoop" ? "opencode" : "opencode-ai"
+            check.name === "brew" || check.name === "choco" || check.name === "scoop"
+              ? "opencode"
+              : check.name === "bun"
+                ? "@anjanpoonacha/opencode"
+                : "opencode-ai"
           if (output.includes(installedName)) {
             return check.name
           }
@@ -227,8 +232,20 @@ export const layer: Layer.Layer<Service, never, HttpClient.HttpClient | ChildPro
           return data.versions.stable
         }
 
-        if (detectedMethod === "npm" || detectedMethod === "bun" || detectedMethod === "pnpm") {
-          return yield* viewVersion(detectedMethod, `opencode-ai@${InstallationChannel}`)
+        if (
+          detectedMethod === "npm" ||
+          detectedMethod === "bun" ||
+          detectedMethod === "pnpm" ||
+          detectedMethod === "curl"
+        ) {
+          const r = (yield* text(["npm", "config", "get", "registry"])).trim()
+          const reg = r || "https://registry.npmjs.org"
+          const registry = reg.endsWith("/") ? reg.slice(0, -1) : reg
+          const response = yield* httpOk.execute(
+            HttpClientRequest.get(`${registry}/@anjanpoonacha/opencode/latest`).pipe(HttpClientRequest.acceptJson),
+          )
+          const data = yield* HttpClientResponse.schemaBodyJson(NpmPackage)(response)
+          return data.version
         }
 
         if (detectedMethod === "choco") {
@@ -252,28 +269,26 @@ export const layer: Layer.Layer<Service, never, HttpClient.HttpClient | ChildPro
         }
 
         const response = yield* httpOk.execute(
-          HttpClientRequest.get("https://api.github.com/repos/anomalyco/opencode/releases/latest").pipe(
+          HttpClientRequest.get("https://api.github.com/repos/anjanpoonacha/opencode/releases/latest").pipe(
             HttpClientRequest.acceptJson,
           ),
         )
         const data = yield* HttpClientResponse.schemaBodyJson(GitHubRelease)(response)
-        return data.tag_name.replace(/^v/, "")
+        return data.tag_name.replace(/^v/, "").replace(/-anjan$/, "")
       }, Effect.orDie)
 
       const upgradeImpl = Effect.fn("Installation.upgrade")(function* (m: Method, target: string) {
         let result: { code: ChildProcessSpawner.ExitCode; stdout: string; stderr: string } | undefined
         switch (m) {
           case "curl":
-            result = yield* upgradeCurl(target)
-            break
           case "npm":
-            result = yield* run(["npm", "install", "-g", `opencode-ai@${target}`])
+            result = yield* run(["npm", "install", "-g", `@anjanpoonacha/opencode@${target}`])
             break
           case "pnpm":
-            result = yield* run(["pnpm", "install", "-g", `opencode-ai@${target}`])
+            result = yield* run(["pnpm", "install", "-g", `@anjanpoonacha/opencode@${target}`])
             break
           case "bun":
-            result = yield* run(["bun", "install", "-g", `opencode-ai@${target}`])
+            result = yield* run(["bun", "install", "-g", `@anjanpoonacha/opencode@${target}`])
             break
           case "brew": {
             const formula = yield* getBrewFormula()

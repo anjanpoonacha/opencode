@@ -134,9 +134,15 @@ export const layer: Layer.Layer<
             description: def.description,
             execute: (args, toolCtx) =>
               Effect.gen(function* () {
+                yield* toolCtx.ask({
+                  permission: id,
+                  patterns: ["*"],
+                  always: ["*"],
+                  metadata: {},
+                })
                 const pluginCtx: PluginToolContext = {
                   ...toolCtx,
-                  ask: (req) => toolCtx.ask(req),
+                  ask: (req) => Effect.runPromise(toolCtx.ask(req)),
                   directory: ctx.directory,
                   worktree: ctx.worktree,
                 }

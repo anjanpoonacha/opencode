@@ -1,0 +1,209 @@
+name: Publish Fork
+
+on:
+  push:
+    branches:
+      - release
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish (e.g. 1.4.0). Defaults to package.json version."
+        required: false
+        type: string
+
+jobs:
+  get-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      should_publish: ${{ steps.check.outputs.should_publish }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Get version from package.json
+        id: version
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION=$(node -p "require('./packages/opencode/package.json').version")
+          fi
+          TAG="v${VERSION}-anjan"
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "Version: $VERSION, Tag: $TAG"
+
+      - name: Check if tag exists
+        id: check
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "should_publish=false" >> $GITHUB_OUTPUT
+            echo "Tag $TAG already exists, skipping publish"
+          else
+            echo "should_publish=true" >> $GITHUB_OUTPUT
+            echo "Tag $TAG does not exist, will publish"
+          fi
+
+  build-cli:
+    needs: get-version
+    if: needs.get-version.outputs.should_publish == 'true'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Build CLI (macOS ARM64)
+        run: cd packages/opencode && bun run build --single
+        env:
+          OPENCODE_VERSION: ${{ needs.get-version.outputs.version }}
+
+      - name: Package CLI
+        run: |
+          mkdir -p cli-dist
+          cp -r packages/opencode/dist/opencode-darwin-arm64 cli-dist/
+          cd cli-dist && zip -r opencode-darwin-arm64.zip opencode-darwin-arm64
+
+      - name: Upload CLI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: cli-darwin-arm64
+          path: cli-dist/opencode-darwin-arm64.zip
+
+  build-desktop:
+    needs: [get-version, build-cli]
+    if: needs.get-version.outputs.should_publish == 'true'
+    runs-on: macos-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: packages/desktop/src-tauri
+
+      - name: Install dependencies
+        run: bun install
+
+      - name: Prepare desktop sidecar
+        run: |
+          cd packages/desktop
+          RUST_TARGET=aarch64-apple-darwin bun ./scripts/predev.ts
+
+      - name: Build Desktop App
+        run: |
+          cd packages/desktop
+          bun tauri build --target aarch64-apple-darwin
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: Upload Desktop artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-darwin-arm64
+          path: packages/desktop/src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/*.dmg
+          if-no-files-found: ignore
+
+  publish-npm:
+    needs: [get-version, build-cli]
+    if: needs.get-version.outputs.should_publish == 'true'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Download CLI artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: cli-darwin-arm64
+          path: cli-dist
+
+      - name: Extract CLI
+        run: cd cli-dist && unzip opencode-darwin-arm64.zip
+
+      - name: Setup npm auth
+        run: echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > ~/.npmrc
+
+      - name: Publish to npm
+        run: bun ./scripts/publish-fork.ts
+        env:
+          PUBLISH_VERSION: ${{ needs.get-version.outputs.tag }}
+
+  create-release:
+    needs: [get-version, build-cli, build-desktop, publish-npm]
+    if: always() && needs.get-version.outputs.should_publish == 'true' && needs.build-cli.result == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download CLI artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: cli-darwin-arm64
+          path: artifacts
+
+      - name: Download Desktop artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: desktop-darwin-arm64
+          path: artifacts
+        continue-on-error: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ needs.get-version.outputs.tag }}
+          name: OpenCode ${{ needs.get-version.outputs.tag }}
+          body: |
+            ## OpenCode Fork v${{ needs.get-version.outputs.version }}
+
+            Synced with upstream [opencode-ai v${{ needs.get-version.outputs.version }}](https://github.com/sst/opencode/releases/tag/v${{ needs.get-version.outputs.version }})
+
+            ### Custom Features
+            - Sidebar hierarchy with collapsible subagent tree
+            - Chat functionality restored for subagent sessions
+
+            ### Install CLI
+            ```bash
+            bun i -g @anjanpoonacha/opencode
+            # or
+            npm i -g @anjanpoonacha/opencode
+            ```
+
+            ### Install Desktop (macOS ARM64)
+            Download the DMG below and drag to Applications.
+            First launch: Right-click → Open (to bypass unsigned app warning)
+          files: |
+            artifacts/*.zip
+            artifacts/*.dmg
+          fail_on_unmatched_files: false
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

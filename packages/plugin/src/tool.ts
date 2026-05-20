@@ -42,13 +42,20 @@ export type ToolResult =
       attachments?: ToolAttachment[]
     }
 
+export type ToolDefinition = {
+  description: string
+  args: z.ZodRawShape
+  execute(args: Record<string, unknown>, context: ToolContext): Promise<ToolResult>
+}
+
 export function tool<Args extends z.ZodRawShape>(input: {
   description: string
   args: Args
   execute(args: z.infer<z.ZodObject<Args>>, context: ToolContext): Promise<ToolResult>
-}) {
-  return input
+}): ToolDefinition {
+  return {
+    ...input,
+    execute: (args, context) => Promise.resolve(input.execute(args as z.infer<z.ZodObject<Args>>, context)),
+  }
 }
 tool.schema = z
-
-export type ToolDefinition = ReturnType<typeof tool>

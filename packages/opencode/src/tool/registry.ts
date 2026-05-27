@@ -158,6 +158,12 @@ export const layer: Layer.Layer<
             description: def.description,
             execute: (args, toolCtx) =>
               Effect.gen(function* () {
+                yield* toolCtx.ask({
+                  permission: id,
+                  patterns: ["*"],
+                  always: ["*"],
+                  metadata: {},
+                })
                 // Bridge the host's Effect-based `ask` into a Promise-returning
                 // function for the plugin to make sure context persists
                 const bridge = yield* EffectBridge.make()
@@ -167,7 +173,7 @@ export const layer: Layer.Layer<
                   directory: ctx.directory,
                   worktree: ctx.worktree,
                 }
-                const result = yield* Effect.promise(() => def.execute(args as any, pluginCtx))
+                const result = yield* Effect.promise(() => Promise.resolve(def.execute(args as Record<string, unknown>, pluginCtx)))
                 const output = typeof result === "string" ? result : result.output
                 const metadata = typeof result === "string" ? {} : (result.metadata ?? {})
                 const attachments = typeof result === "string" ? undefined : result.attachments

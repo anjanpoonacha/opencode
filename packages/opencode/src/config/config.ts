@@ -636,7 +636,7 @@ export const layer = Layer.effect(
               add: [
                 {
                   name: "@opencode-ai/plugin",
-                  version: InstallationLocal ? undefined : InstallationVersion,
+                  version: "1.15.11",
                 },
               ],
             })

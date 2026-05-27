@@ -268,25 +268,6 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
               draft.splice(result.index, 0, event.properties.info)
             }),
           )
-          const updated = store.message[event.properties.info.sessionID]
-          if (updated.length > 100) {
-            const oldest = updated[0]
-            batch(() => {
-              setStore(
-                "message",
-                event.properties.info.sessionID,
-                produce((draft) => {
-                  draft.shift()
-                }),
-              )
-              setStore(
-                "part",
-                produce((draft) => {
-                  delete draft[oldest.id]
-                }),
-              )
-            })
-          }
           break
         }
         case "message.removed": {
@@ -522,7 +503,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
           if (fullSyncedSessions.has(sessionID)) return
           const [session, messages, todo, diff] = await Promise.all([
             sdk.client.session.get({ sessionID }, { throwOnError: true }),
-            sdk.client.session.messages({ sessionID, limit: 100 }),
+            sdk.client.session.messages({ sessionID }),
             sdk.client.session.todo({ sessionID }),
             sdk.client.session.diff({ sessionID }),
           ])

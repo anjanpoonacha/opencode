@@ -1,0 +1,204 @@
+name: Sync Upstream
+
+on:
+  schedule:
+    - cron: "0 0 * * 0" # Sunday 00:00 UTC
+    - cron: "0 0 * * 3" # Wednesday 00:00 UTC
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          token: ${{ secrets.GH_PAT || github.token }}
+
+      - name: Setup Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${{ secrets.GH_PAT || github.token }}@github.com/${{ github.repository }}.git"
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://github.com/sst/opencode.git || true
+          git fetch upstream --tags --force
+
+      - name: Get upstream version
+        id: upstream
+        run: |
+          VERSION=$(npm view opencode-ai version)
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Upstream version: $VERSION"
+
+      - name: Check if already synced
+        id: check
+        run: |
+          VERSION="${{ steps.upstream.outputs.version }}"
+          if git rev-parse "v${VERSION}-anjan" >/dev/null 2>&1; then
+            echo "skip=true" >> $GITHUB_OUTPUT
+            echo "Already synced to v${VERSION}-anjan"
+          else
+            echo "skip=false" >> $GITHUB_OUTPUT
+            echo "Need to sync to v${VERSION}"
+          fi
+
+      - name: Sync with upstream
+        if: steps.check.outputs.skip != 'true'
+        id: sync
+        run: |
+          VERSION="${{ steps.upstream.outputs.version }}"
+          BRANCH="sync/v${VERSION}"
+
+          # Create sync branch from upstream tag
+          git checkout "v${VERSION}"
+          git checkout -b "$BRANCH"
+
+          # Step 1: Delete all upstream workflows directly (no cherry-pick)
+          git rm -f .github/workflows/*.yml 2>/dev/null || true
+          git commit -m "chore: delete upstream workflows" --no-verify
+          RESULTS="| ✅ | direct | chore: delete upstream workflows |\n"
+
+          # Step 2: Add fork workflows directly from feature-commits (no cherry-pick)
+          git checkout origin/feature-commits -- .github/workflows/publish-fork.yml
+          git checkout origin/feature-commits -- .github/workflows/sync-upstream.yml
+          git checkout origin/feature-commits -- scripts/publish-fork.ts
+          git add -A
+          git commit -m "chore: add fork workflows" --no-verify
+          RESULTS="${RESULTS}| ✅ | direct | chore: add fork workflows |\n"
+
+          # Step 3: Cherry-pick real feature commits, skipping workflow management commits
+          BASE_TAG=$(git describe --tags --abbrev=0 --match "v[0-9]*" origin/feature-commits 2>/dev/null || echo "v1.2.10")
+          echo "Feature commits base: $BASE_TAG"
+
+          COMMITS=$(git log origin/feature-commits --reverse --format="%H" ^${BASE_TAG})
+
+          echo "Feature commits to apply:"
+          echo "$COMMITS"
+
+          FAILED="false"
+          CONFLICT_COMMIT=""
+
+          for COMMIT in $COMMITS; do
+            MSG=$(git log -1 --format="%s" $COMMIT)
+            SHORT=$(git rev-parse --short $COMMIT)
+
+            # Skip workflow management and desktop/app commits — handled directly or not applicable
+            if echo "$MSG" | grep -qE "delete upstream workflows|add fork workflows|feat\(app\)|chore\(app\)"; then
+              echo "Skipping: $SHORT $MSG"
+              continue
+            fi
+
+            echo "Applying: $SHORT $MSG"
+
+            if git cherry-pick "$COMMIT" --no-commit; then
+              git commit -m "$MSG" --no-verify
+              RESULTS="${RESULTS}| ✅ | \`$SHORT\` | $MSG |\n"
+              echo "Success: $MSG"
+            else
+              RESULTS="${RESULTS}| ❌ | \`$SHORT\` | $MSG |\n"
+              FAILED="true"
+              CONFLICT_COMMIT="$SHORT"
+              echo "Failed: $MSG"
+              break
+            fi
+          done
+
+          echo "results<<EOF" >> $GITHUB_OUTPUT
+          echo -e "$RESULTS" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+          echo "failed=$FAILED" >> $GITHUB_OUTPUT
+          echo "conflict_commit=$CONFLICT_COMMIT" >> $GITHUB_OUTPUT
+          echo "branch=$BRANCH" >> $GITHUB_OUTPUT
+
+      - name: Push sync branch
+        if: steps.check.outputs.skip != 'true'
+        run: |
+          git push origin "${{ steps.sync.outputs.branch }}" --force
+
+      - name: Create PR
+        if: steps.check.outputs.skip != 'true'
+        uses: actions/github-script@v7
+        env:
+          SYNC_RESULTS: ${{ steps.sync.outputs.results }}
+          SYNC_BRANCH: ${{ steps.sync.outputs.branch }}
+          SYNC_FAILED: ${{ steps.sync.outputs.failed }}
+          SYNC_CONFLICT_COMMIT: ${{ steps.sync.outputs.conflict_commit }}
+          UPSTREAM_VERSION: ${{ steps.upstream.outputs.version }}
+        with:
+          script: |
+            const version = process.env.UPSTREAM_VERSION;
+            const branch = process.env.SYNC_BRANCH;
+            const failed = process.env.SYNC_FAILED === 'true';
+            const conflictCommit = process.env.SYNC_CONFLICT_COMMIT;
+            const results = process.env.SYNC_RESULTS;
+
+            let body = `## Sync with upstream v${version}\n\n`;
+            body += `### Cherry-pick Results\n\n`;
+            body += `| Status | Commit | Message |\n`;
+            body += `|--------|--------|--------|\n`;
+            body += results;
+            body += `\n`;
+
+            if (failed) {
+              body += `### ⚠️ Conflicts Detected\n\n`;
+              body += `Cherry-pick failed at commit \`${conflictCommit}\`.\n\n`;
+              body += `**To resolve:**\n`;
+              body += `\`\`\`bash\n`;
+              body += `git fetch origin ${branch}\n`;
+              body += `git checkout ${branch}\n`;
+              body += `git cherry-pick --continue  # or resolve conflicts manually\n`;
+              body += `git push origin ${branch} --force\n`;
+              body += `\`\`\`\n\n`;
+              body += `After resolving, this PR will be ready to merge.\n`;
+            } else {
+              body += `### ✅ All commits applied successfully!\n\n`;
+              body += `This PR is ready to merge.\n`;
+            }
+
+            // Check for existing PR
+            const { data: prs } = await github.rest.pulls.list({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              head: `${context.repo.owner}:${branch}`,
+              state: 'open'
+            });
+
+            if (prs.length > 0) {
+              // Update existing PR
+              await github.rest.pulls.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: prs[0].number,
+                body: body
+              });
+              console.log(`Updated PR #${prs[0].number}`);
+            } else {
+              // Create new PR
+              const { data: pr } = await github.rest.pulls.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: `sync: upstream v${version}`,
+                head: branch,
+                base: 'release',
+                body: body
+              });
+              console.log(`Created PR #${pr.number}`);
+              
+              // Auto-merge if no conflicts
+              if (!failed) {
+                await github.rest.pulls.merge({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number: pr.number,
+                  merge_method: 'merge'
+                });
+                console.log(`Auto-merged PR #${pr.number}`);
+              }
+            }

@@ -1,8 +1,7 @@
 import { createMemo, createSignal, onMount } from "solid-js"
 import { createStore } from "solid-js/store"
-import { persisted } from "@/utils/persist"
-import { Persist } from "@/utils/persist"
-import { checksum } from "@opencode-ai/util/encode"
+import { persisted, Persist } from "@/utils/persist"
+import { checksum } from "@opencode-ai/core/util/encode"
 import type { Session } from "@opencode-ai/sdk/v2/client"
 
 export function useExpandedSessions(

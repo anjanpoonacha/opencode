@@ -225,14 +225,14 @@ export function Session() {
       : [],
   )
   const permissions = createMemo(() => {
-    if (session()?.parentID) return []
-    return children().flatMap((x) => sync.data.permission[x.id] ?? [])
+    if (session()?.parentID) return sync.data.permission[route.sessionID] ?? [] // When viewing a child session, show its own permissions
+    return children().flatMap((x) => sync.data.permission[x.id] ?? []) // When viewing parent, aggregate permissions from all children
   })
   const questions = createMemo(() => {
-    if (session()?.parentID) return []
-    return children().flatMap((x) => sync.data.question[x.id] ?? [])
+    if (session()?.parentID) return sync.data.question[route.sessionID] ?? [] // When viewing a child session, show its own permissions
+    return children().flatMap((x) => sync.data.question[x.id] ?? []) // When viewing parent, aggregate permissions from all children
   })
-  const visible = createMemo(() => !session()?.parentID && permissions().length === 0 && questions().length === 0)
+  const visible = createMemo(() => permissions().length === 0 && questions().length === 0)
   const disabled = createMemo(() => permissions().length > 0 || questions().length > 0)
 
   const pending = createMemo(() => {

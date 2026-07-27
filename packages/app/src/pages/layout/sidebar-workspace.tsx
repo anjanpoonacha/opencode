@@ -20,6 +20,7 @@ import { useServerSync, useQueryOptions } from "@/context/server-sync"
 import { useLanguage } from "@/context/language"
 import { NewSessionItem, SessionItem, SessionSkeleton, SessionTreeProvider } from "./sidebar-items"
 import { sortedRootSessions, workspaceKey } from "./helpers"
+import { pathKey } from "@/utils/path-key"
 import { useIsFetching } from "@tanstack/solid-query"
 
 type InlineEditorComponent = (props: {
@@ -326,7 +327,7 @@ export const SortableWorkspace = (props: {
   const boot = createMemo(() => open() || active())
   const count = createMemo(() => sessions()?.length ?? 0)
   const hasMore = createMemo(() => workspaceStore.sessionTotal > count())
-  const fetching = useIsFetching(() => queryOptions().sessions(workspaceKey(props.directory)))
+  const fetching = useIsFetching(() => queryOptions().sessions(pathKey(props.directory)))
   const busy = createMemo(() => props.ctx.isBusy(props.directory))
   const loading = () => fetching() > 0 && count() === 0
   const touch = createMediaQuery("(hover: none)")
@@ -463,7 +464,7 @@ export const LocalWorkspace = (props: {
   const slug = createMemo(() => base64Encode(props.project.worktree))
   const sessions = createMemo(() => sortedRootSessions(workspace().store, props.sortNow()))
   const count = createMemo(() => sessions()?.length ?? 0)
-  const fetching = useIsFetching(() => queryOptions().sessions(workspaceKey(props.project.worktree)))
+  const fetching = useIsFetching(() => queryOptions().sessions(pathKey(props.project.worktree)))
   const hasMore = createMemo(() => workspace().store.sessionTotal > count())
   const loading = () => fetching() > 0 && count() === 0
   const loadMore = async () => {

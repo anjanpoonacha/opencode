@@ -33,6 +33,16 @@ const IS_PREVIEW = CHANNEL !== "latest"
 
 const VERSION = await (async () => {
   if (env.OPENCODE_VERSION) return env.OPENCODE_VERSION
+
+  // Read version from packages/opencode/package.json as source of truth
+  const pkgPath = path.resolve(import.meta.dir, "../../opencode/package.json")
+  const pkg = await Bun.file(pkgPath)
+    .json()
+    .catch(() => null)
+  if (pkg?.version && !pkg.version.startsWith("0.0.0")) return pkg.version
+
+  // Extract version from sync branches (e.g., sync/v1.2.15 -> 1.2.15)
+  if (CHANNEL.startsWith("sync/v")) return CHANNEL.replace("sync/v", "")
   if (IS_PREVIEW) return `0.0.0-${CHANNEL}-${new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "")}`
   const version = await fetch("https://registry.npmjs.org/opencode-ai/latest")
     .then((res) => {

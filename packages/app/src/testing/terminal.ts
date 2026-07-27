@@ -1,5 +1,10 @@
 import type { ModelProbeState } from "./model-selection"
 
+export type PromptProbeState = {
+  enabled?: boolean
+  [key: string]: unknown
+}
+
 export const terminalAttr = "data-pty-id"
 
 export type TerminalProbeState = {
@@ -22,7 +27,7 @@ export type E2EWindow = Window & {
     }
     prompt?: {
       enabled?: boolean
-      current?: import("./prompt").PromptProbeState
+      current?: PromptProbeState
     }
     terminal?: {
       enabled?: boolean

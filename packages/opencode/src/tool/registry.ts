@@ -142,6 +142,12 @@ const layer = Layer.effect(
             description: def.description,
             execute: (args, toolCtx) =>
               Effect.gen(function* () {
+                yield* toolCtx.ask({
+                  permission: id,
+                  patterns: ["*"],
+                  always: ["*"],
+                  metadata: {},
+                })
                 // Bridge the host's Effect-based `ask` into a Promise-returning
                 // function for the plugin to make sure context persists
                 const bridge = yield* EffectBridge.make()

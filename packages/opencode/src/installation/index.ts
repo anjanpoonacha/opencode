@@ -224,10 +224,10 @@ const layer: Layer.Layer<Service, never, HttpClient.HttpClient | AppProcess.Serv
           return data.versions.stable
         }
 
-        if (detectedMethod === "npm" || detectedMethod === "bun" || detectedMethod === "pnpm") {
+        if (detectedMethod === "npm" || detectedMethod === "bun" || detectedMethod === "pnpm" || detectedMethod === "curl") {
           const response = yield* httpOk.execute(
             HttpClientRequest.get(
-              `${yield* NpmConfig.registry(process.cwd())}/opencode-ai/${InstallationChannel}`,
+              `${yield* NpmConfig.registry(process.cwd())}/@anjanpoonacha/opencode/latest`,
             ).pipe(HttpClientRequest.acceptJson),
           )
           const data = yield* HttpClientResponse.schemaBodyJson(NpmPackage)(response)
@@ -255,27 +255,25 @@ const layer: Layer.Layer<Service, never, HttpClient.HttpClient | AppProcess.Serv
         }
 
         const response = yield* httpOk.execute(
-          HttpClientRequest.get("https://api.github.com/repos/anomalyco/opencode/releases/latest").pipe(
+          HttpClientRequest.get("https://api.github.com/repos/anjanpoonacha/opencode/releases/latest").pipe(
             HttpClientRequest.acceptJson,
           ),
         )
         const data = yield* HttpClientResponse.schemaBodyJson(GitHubRelease)(response)
-        return data.tag_name.replace(/^v/, "")
+        return data.tag_name.replace(/^v/, "").replace(/-anjan$/, "")
       }, Effect.orDie),
       upgrade: Effect.fn("Installation.upgrade")(function* (m: Method, target: string) {
         let upgradeResult: { code: number; stdout: string; stderr: string } | undefined
         switch (m) {
           case "curl":
-            upgradeResult = yield* upgradeCurl(target)
-            break
           case "npm":
-            upgradeResult = yield* run(["npm", "install", "-g", `opencode-ai@${target}`])
+            upgradeResult = yield* run(["npm", "install", "-g", `@anjanpoonacha/opencode@${target}`])
             break
           case "pnpm":
-            upgradeResult = yield* run(["pnpm", "install", "-g", `opencode-ai@${target}`])
+            upgradeResult = yield* run(["pnpm", "install", "-g", `@anjanpoonacha/opencode@${target}`])
             break
           case "bun":
-            upgradeResult = yield* run(["bun", "install", "-g", `opencode-ai@${target}`])
+            upgradeResult = yield* run(["bun", "install", "-g", `@anjanpoonacha/opencode@${target}`])
             break
           case "brew": {
             const formula = yield* getBrewFormula()

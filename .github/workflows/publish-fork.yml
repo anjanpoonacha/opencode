@@ -64,6 +64,9 @@ jobs:
 
       - name: Build CLI (macOS ARM64)
         run: cd packages/opencode && bun run build --single
+        env:
+          OPENCODE_VERSION: ${{ needs.get-version.outputs.version }}
+          OPENCODE_CHANNEL: latest
 
       - name: Package CLI
         run: |

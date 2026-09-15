@@ -15,6 +15,28 @@ export function compareSessionTime(a: Session, b: Session) {
   return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
 }
 
+export const workspaceKey = (directory: string) => {
+  const value = directory.replaceAll("\\", "/")
+  const drive = value.match(/^([A-Za-z]:)\/+$/)
+  if (drive) return `${drive[1]}/`
+  if (/^\/+$/i.test(value)) return "/"
+  return value.replace(/\/+$/, "")
+}
+
+function sortSessions(now: number) {
+  const oneMinuteAgo = now - 60 * 1000
+  return (a: Session, b: Session) => {
+    const aUpdated = a.time.updated ?? a.time.created
+    const bUpdated = b.time.updated ?? b.time.created
+    const aRecent = aUpdated > oneMinuteAgo
+    const bRecent = bUpdated > oneMinuteAgo
+    if (aRecent && bRecent) return a.id < b.id ? -1 : a.id > b.id ? 1 : 0
+    if (aRecent && !bRecent) return -1
+    if (!aRecent && bRecent) return 1
+    return bUpdated - aUpdated
+  }
+}
+
 const isRootVisibleSession = (session: Session, directory: string) =>
   pathKey(session.directory) === pathKey(directory) && !session.parentID && !session.time?.archived
 
@@ -44,6 +66,35 @@ export const childSessionOnPath = (sessions: Session[] | undefined, rootID: stri
     if (session.parentID === rootID) return session
     id = session.parentID
   }
+}
+
+export const childMapByParent = (sessions: Session[] | undefined) => {
+  const map = new Map<string, string[]>()
+  for (const session of sessions ?? []) {
+    if (!session.parentID) continue
+    const existing = map.get(session.parentID)
+    if (existing) {
+      existing.push(session.id)
+      continue
+    }
+    map.set(session.parentID, [session.id])
+  }
+  return map
+}
+
+export const getChildSessions = (sessions: Session[], parentID: string): Session[] =>
+  sessions.filter((s) => s.parentID === parentID && !s.time?.archived).sort(sortSessions(Date.now()))
+
+export const validateParentIDs = (sessions: Session[]): { valid: boolean; orphaned: string[] } => {
+  const ids = new Set(sessions.map((s) => s.id))
+  const orphaned: string[] = []
+  for (const session of sessions) {
+    if (session.parentID && !ids.has(session.parentID)) {
+      orphaned.push(session.id)
+      console.warn(`[layout] Session "${session.id}" has missing parentID reference: "${session.parentID}"`)
+    }
+  }
+  return { valid: orphaned.length === 0, orphaned }
 }
 
 export const displayName = (project: { name?: string; worktree: string }) =>
@@ -117,11 +168,11 @@ export const errorMessage = (err: unknown, fallback: string) => {
 }
 
 export const effectiveWorkspaceOrder = (local: string, dirs: string[], persisted?: string[]) => {
-  const root = pathKey(local)
+  const root = workspaceKey(local)
   const live = new Map<string, string>()
 
   for (const dir of dirs) {
-    const key = pathKey(dir)
+    const key = workspaceKey(dir)
     if (key === root) continue
     if (!live.has(key)) live.set(key, dir)
   }
@@ -130,7 +181,7 @@ export const effectiveWorkspaceOrder = (local: string, dirs: string[], persisted
 
   const result = [local]
   for (const dir of persisted) {
-    const key = pathKey(dir)
+    const key = workspaceKey(dir)
     if (key === root) continue
     const match = live.get(key)
     if (!match) continue

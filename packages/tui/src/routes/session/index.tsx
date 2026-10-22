@@ -204,7 +204,8 @@ export function Session(props: {
     return data.session.family(route.sessionID).filter((id) => id !== route.sessionID)
   })
   const permissions = createMemo(() => {
-    if (session()?.parentID) return []
+    // When viewing a child (subagent) session, show its own permissions so they can be answered here.
+    if (session()?.parentID) return data.session.permission.list(route.sessionID) ?? []
     return [route.sessionID, ...descendantSessionIDs()].flatMap(
       (sessionID) => data.session.permission.list(sessionID) ?? [],
     )
@@ -212,7 +213,8 @@ export function Session(props: {
   const promptedPermissions = createMemo(() => (local.permission.mode === "autoaccept" ? [] : permissions()))
   const forms = createMemo(() => {
     const global = data.session.form.list("global", location()) ?? []
-    if (session()?.parentID) return global
+    // When viewing a child (subagent) session, show its own forms (questions) alongside global ones.
+    if (session()?.parentID) return (data.session.form.list(route.sessionID) ?? []).concat(global)
     return [route.sessionID, ...descendantSessionIDs()]
       .flatMap((sessionID) => data.session.form.list(sessionID) ?? [])
       .concat(global)
